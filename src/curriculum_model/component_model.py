@@ -1,51 +1,39 @@
 """
-ComponentTransformerModel for multi-task learning.
+ComponentTransformerModel for in-context learning.
 
 Integrates:
 - Component embedders (vector, matrix, scalar)
 - Role embedding layer
 - SEP and MASK special tokens
 - Transformer backbone
-- Dual output heads (vector and scalar)
+- Output head
 """
 
 from dataclasses import dataclass
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List
 import torch
 import torch.nn as nn
 
 from .embedders import ComponentEmbedders
 from .roles import RoleEmbedding
 from .special_tokens import SpecialTokens
-from .sequence_builder import SequenceBuilder, SequenceOutput, PositionalEncoder
-from .output_heads import DualOutputHead, OutputHeadResult, compute_task_loss
-from .tasks import OutputType, TaskSpec
+from .sequence_builder import PositionalEncoder
+from .output_heads import DualOutputHead, OutputHeadResult
 
-# Import backbone from custom_transformer (which redirects to model/)
 from custom_transformer import CustomGPTBackbone, TransformerConfig, GPTOutput
 
 
 @dataclass
 class ComponentModelConfig:
     """Configuration for ComponentTransformerModel."""
-
-    # Dimensions
     d: int = 4
     n_embd: int = 128
     n_layer: int = 6
     n_head: int = 4
     n_positions: int = 128
-
-    # Architecture options
     max_examples: int = 64
     dropout: float = 0.0
     output_bias: bool = True
-
-    # Backbone options
-    norm_type: str = "layernorm"
-    ffn_type: str = "mlp"
-    activation: str = "gelu"
-    pre_norm: bool = True
 
     def to_transformer_config(self) -> TransformerConfig:
         """Convert to TransformerConfig for backbone."""
@@ -54,11 +42,7 @@ class ComponentModelConfig:
             n_layer=self.n_layer,
             n_head=self.n_head,
             n_positions=self.n_positions,
-            pos_encoding_type="none",  # We use our own positional encoding
-            norm_type=self.norm_type,
-            ffn_type=self.ffn_type,
-            activation=self.activation,
-            pre_norm=self.pre_norm,
+            pos_encoding_type="none",  # We use example-level positional encoding
             dropout=self.dropout,
         )
 
@@ -66,7 +50,6 @@ class ComponentModelConfig:
 @dataclass
 class ComponentModelOutput:
     """Output from ComponentTransformerModel."""
-
     vector_output: torch.Tensor  # (batch_size, d)
     scalar_output: torch.Tensor  # (batch_size, 1)
     hidden_at_mask: Optional[torch.Tensor] = None
@@ -75,17 +58,9 @@ class ComponentModelOutput:
 
 
 class ComponentTransformerModel(nn.Module):
-    """Component-based transformer for multi-task learning."""
+    """Component-based transformer for in-context learning."""
 
-    def __init__(
-        self,
-        config: Optional[ComponentModelConfig] = None,
-        embedders: Optional[ComponentEmbedders] = None,
-        role_embedding: Optional[RoleEmbedding] = None,
-        special_tokens: Optional[SpecialTokens] = None,
-        backbone: Optional[nn.Module] = None,
-        output_head: Optional[DualOutputHead] = None,
-    ):
+    def __init__(self, config: Optional[ComponentModelConfig] = None):
         super().__init__()
 
         if config is None:
@@ -96,13 +71,13 @@ class ComponentTransformerModel(nn.Module):
         self.n_embd = config.n_embd
 
         # Component embedders
-        self.embedders = embedders or ComponentEmbedders(config.d, config.n_embd)
+        self.embedders = ComponentEmbedders(config.d, config.n_embd)
 
         # Role embeddings
-        self.role_embedding = role_embedding or RoleEmbedding(config.n_embd)
+        self.role_embedding = RoleEmbedding(config.n_embd)
 
         # Special tokens
-        self.special_tokens = special_tokens or SpecialTokens(config.n_embd)
+        self.special_tokens = SpecialTokens(config.n_embd)
 
         # Example-level positional encoder
         self.positional_encoder = PositionalEncoder(
@@ -111,26 +86,14 @@ class ComponentTransformerModel(nn.Module):
         )
 
         # Transformer backbone
-        if backbone is not None:
-            self.backbone = backbone
-        else:
-            transformer_config = config.to_transformer_config()
-            self.backbone = CustomGPTBackbone(transformer_config)
+        transformer_config = config.to_transformer_config()
+        self.backbone = CustomGPTBackbone(transformer_config)
 
-        # Output heads
-        self.output_head = output_head or DualOutputHead(
+        # Output head
+        self.output_head = DualOutputHead(
             config.n_embd,
             config.d,
             bias=config.output_bias,
-        )
-
-        # Sequence builder
-        self.sequence_builder = SequenceBuilder(
-            d=config.d,
-            n_embd=config.n_embd,
-            embedders=self.embedders,
-            role_embedding=self.role_embedding,
-            special_tokens=self.special_tokens,
         )
 
     def forward(
@@ -171,7 +134,7 @@ class ComponentTransformerModel(nn.Module):
         batch_indices = torch.arange(batch_size, device=tokens.device)
         hidden_at_mask = hidden_states[batch_indices, mask_positions]
 
-        # Compute outputs from both heads
+        # Compute outputs
         output_result: OutputHeadResult = self.output_head(hidden_at_mask)
 
         return ComponentModelOutput(
@@ -181,82 +144,3 @@ class ComponentTransformerModel(nn.Module):
             last_hidden_state=hidden_states if return_hidden else None,
             attention_maps=backbone_output.attention_maps if return_attention else None,
         )
-
-    def forward_from_sequence_output(
-        self,
-        seq_output: SequenceOutput,
-        return_hidden: bool = False,
-        return_attention: bool = False,
-    ) -> ComponentModelOutput:
-        """Forward from SequenceOutput."""
-        return self.forward(
-            tokens=seq_output.tokens,
-            example_positions=seq_output.example_positions,
-            mask_positions=seq_output.mask_positions,
-            return_hidden=return_hidden,
-            return_attention=return_attention,
-        )
-
-    def compute_loss(
-        self,
-        model_output: ComponentModelOutput,
-        target: torch.Tensor,
-        output_type: OutputType,
-        reduction: str = "mean",
-    ) -> torch.Tensor:
-        """Compute loss for the appropriate output type."""
-        result = OutputHeadResult(
-            vector_output=model_output.vector_output,
-            scalar_output=model_output.scalar_output,
-        )
-        return compute_task_loss(result, target, output_type, reduction)
-
-    def predict(
-        self,
-        tokens: torch.Tensor,
-        example_positions: torch.Tensor,
-        mask_positions: torch.Tensor,
-        output_type: OutputType,
-    ) -> torch.Tensor:
-        """Get prediction for specific output type."""
-        output = self.forward(tokens, example_positions, mask_positions)
-        if output_type == OutputType.VECTOR:
-            return output.vector_output
-        return output.scalar_output
-
-    def build_and_forward(
-        self,
-        context_examples: List[Dict[str, torch.Tensor]],
-        query_inputs: Dict[str, torch.Tensor],
-        task_spec: TaskSpec,
-        return_hidden: bool = False,
-        return_attention: bool = False,
-    ) -> Tuple[ComponentModelOutput, SequenceOutput]:
-        """Build sequence and forward in one call."""
-        seq_output = self.sequence_builder.build_sequence(
-            context_examples, query_inputs, task_spec
-        )
-        model_output = self.forward_from_sequence_output(
-            seq_output,
-            return_hidden=return_hidden,
-            return_attention=return_attention,
-        )
-        return model_output, seq_output
-
-
-def create_model(
-    d: int = 4,
-    n_embd: int = 128,
-    n_layer: int = 6,
-    n_head: int = 4,
-    **kwargs,
-) -> ComponentTransformerModel:
-    """Create a ComponentTransformerModel."""
-    config = ComponentModelConfig(
-        d=d,
-        n_embd=n_embd,
-        n_layer=n_layer,
-        n_head=n_head,
-        **kwargs,
-    )
-    return ComponentTransformerModel(config)

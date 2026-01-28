@@ -16,33 +16,6 @@ We study whether transformers trained for ICL on linear systems can iteratively 
 
 Where x_tilde is a noisy estimate and the model learns to predict corrections.
 
-## Results
-
-| Condition Number | Samples Improved | Avg Improvement |
-|------------------|------------------|-----------------|
-| kappa in [1, 10]     | 86%              | 1.35x           |
-| kappa in [10, 50]    | 68%              | 1.10x           |
-| kappa in [50, 100]   | 82%              | 1.17x           |
-| kappa in [100, 200]  | 64%              | 1.07x           |
-| **Overall**      | **75%**          | **1.17x**       |
-
-## Installation
-
-```bash
-pip install torch numpy
-```
-
-## Usage
-
-### Run the main experiment (Approach C - Residual Prediction)
-```bash
-python scripts/approach_c_residual_prediction.py --device cuda
-```
-
-### Run full comparison suite (Baseline, Approach B, Approach C)
-```bash
-python scripts/run_approaches_b_c.py --device cuda
-```
 
 ## Project Structure
 

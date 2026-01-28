@@ -1,3 +1,5 @@
+"""Transformer configuration."""
+
 from dataclasses import dataclass
 
 
@@ -6,14 +8,6 @@ class TransformerConfig:
     n_embd: int = 128
     n_layer: int = 6
     n_head: int = 4
-    n_positions: int = 40
-
-    # Architecture options
-    pos_encoding_type: str = "learned"  # "learned" or "rope"
-    norm_type: str = "layernorm"  # "layernorm" or "rmsnorm"
-    ffn_type: str = "mlp"  # "mlp" (future: "swiglu")
-    activation: str = "gelu"  # "gelu", "relu", "silu"
-
-    pre_norm: bool = True
+    n_positions: int = 128
     dropout: float = 0.0
-    return_attention: bool = True
+    pos_encoding_type: str = "none"  # "none", "learned"
