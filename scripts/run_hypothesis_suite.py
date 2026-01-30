@@ -13,7 +13,7 @@ Hypotheses tested:
     H1: Higher residual_weight improves refinement (0.3 vs 0.5 vs 0.7)
     H2: Deeper models improve performance (n_layer: 4, 6, 8)
     H3: Wider models improve performance (n_embd: 64, 128, 256)
-    H4: More unrolled training iterations improve convergence (train_iterations: 1, 3, 5)
+    H4: Higher noise during training improves generalization (noise_scale: 0.25, 0.5, 1.0)
     H5: Curriculum training improves hard problem performance
     H6: More test iterations continue to improve results (5, 10, 15)
     H7: Learning rate affects convergence (5e-5, 1e-4, 2e-4)
@@ -43,7 +43,7 @@ class ExperimentConfig:
     n_embd: int = 128
     n_head: int = 4
     lr: float = 1e-4
-    train_iterations: int = 3
+    noise_scale: float = 0.5
     kappa_min: float = 1.0
     kappa_max: float = 100.0
     curriculum: bool = False
@@ -59,7 +59,7 @@ class ExperimentConfig:
             "--n_embd", str(self.n_embd),
             "--n_head", str(self.n_head),
             "--lr", str(self.lr),
-            "--train_iterations", str(self.train_iterations),
+            "--noise_scale", str(self.noise_scale),
             "--kappa_min", str(self.kappa_min),
             "--kappa_max", str(self.kappa_max),
             "--test_iterations", str(self.test_iterations),
@@ -139,12 +139,12 @@ def define_experiments() -> List[ExperimentConfig]:
             n_head=n_head,
         ))
 
-    # H4: Unrolled training iterations
-    for iters in [1, 5]:  # 3 is baseline
+    # H4: Noise scale
+    for noise in [0.25, 1.0]:  # 0.5 is baseline
         experiments.append(ExperimentConfig(
-            name=f"train_iters_{iters}",
-            hypothesis="H4_train_iterations",
-            train_iterations=iters,
+            name=f"noise_{noise}",
+            hypothesis="H4_noise_scale",
+            noise_scale=noise,
         ))
 
     # H5: Curriculum learning

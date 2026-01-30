@@ -58,8 +58,7 @@ class Config:
 
     # Role-Disambiguated Residual config
     c_residual_weight: float = 0.5
-    c_train_iterations: int = 3
-    c_unroll_warmup: int = 15000
+    c_noise_scale: float = 0.5
 
     # Data
     num_context: int = 5
@@ -87,7 +86,7 @@ class Config:
         elif approach == "iterative_supervision":
             return self.b_train_iterations
         elif approach == "role_disambiguated_residual":
-            return 1 + self.c_train_iterations
+            return 2  # direct + residual
         raise ValueError(f"Unknown approach: {approach}")
 
     def steps_for(self, approach: str) -> int:
@@ -363,24 +362,20 @@ def train_role_disambiguated_residual(config: Config, device: torch.device) -> C
         pred_direct = model(tokens, ex_pos, mask_pos).vector_output
         loss_direct = F.mse_loss(pred_direct, x_target)
 
-        # Unrolled multi-step residual refinement with curriculum on depth
-        if step < config.c_unroll_warmup:
-            progress = step / config.c_unroll_warmup
-            num_steps = 1 + int(progress * (config.c_train_iterations - 1))
-        else:
-            num_steps = config.c_train_iterations
-
-        x_current = pred_direct.detach()
-        loss_residual = 0.0
-        for _k in range(num_steps):
-            true_residual = x_target - x_current
-            tokens_r, ex_pos_r, mask_pos_r = builder.build_with_estimate(
-                A, b_ctx, x_ctx, b_query, x_current
+        # Residual prediction loss
+        with torch.no_grad():
+            alpha = torch.rand(B, 1, device=device) ** 0.5
+            noise = torch.randn_like(pred_direct) * (
+                torch.rand(B, 1, device=device) * config.c_noise_scale
             )
-            pred_residual = model(tokens_r, ex_pos_r, mask_pos_r).vector_output
-            loss_residual = loss_residual + F.mse_loss(pred_residual, true_residual)
-            x_current = (x_current + pred_residual).detach()
-        loss_residual = loss_residual / num_steps
+            x_estimate = alpha * pred_direct.detach() + (1 - alpha) * x_target + noise
+            true_residual = x_target - x_estimate
+
+        tokens_r, ex_pos_r, mask_pos_r = builder.build_with_estimate(
+            A, b_ctx, x_ctx, b_query, x_estimate
+        )
+        pred_residual = model(tokens_r, ex_pos_r, mask_pos_r).vector_output
+        loss_residual = F.mse_loss(pred_residual, true_residual)
 
         w = config.c_residual_weight
         total_loss = (1 - w) * loss_direct + w * loss_residual

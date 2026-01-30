@@ -52,9 +52,8 @@ class Config:
     max_grad_norm: float = 1.0
 
     # Residual training
-    train_iterations: int = 3
     residual_weight: float = 0.5  # Mix of direct prediction and residual training
-    unroll_warmup: int = 15000    # Steps before reaching full unroll depth
+    noise_scale: float = 0.5
 
     # Data
     num_context: int = 5
@@ -265,27 +264,22 @@ class ResidualTrainer:
         total_loss = total_loss + (1 - self.config.residual_weight) * loss_direct
         losses["direct"] = loss_direct.item()
 
-        # Part 2: Unrolled multi-step residual refinement with curriculum
+        # Part 2: Residual prediction loss
         if self.config.residual_weight > 0:
-            if self.current_step < self.config.unroll_warmup:
-                progress = self.current_step / self.config.unroll_warmup
-                num_steps = 1 + int(progress * (self.config.train_iterations - 1))
-            else:
-                num_steps = self.config.train_iterations
-
-            x_current = pred_0.detach()
-            loss_residual = 0.0
-
-            for _k in range(num_steps):
-                true_residual = x_target - x_current
-                tokens_r, ex_pos_r, mask_pos_r = self.build_tokens_with_estimate(
-                    A, b_ctx, x_ctx, b_query, x_current
+            with torch.no_grad():
+                alpha = torch.rand(B, 1, device=device) ** 0.5
+                noise = torch.randn_like(pred_0) * (
+                    torch.rand(B, 1, device=device) * self.config.noise_scale
                 )
-                pred_residual = self.model(tokens_r, ex_pos_r, mask_pos_r).vector_output
-                loss_residual = loss_residual + F.mse_loss(pred_residual, true_residual)
-                x_current = (x_current + pred_residual).detach()
+                x_estimate = alpha * pred_0.detach() + (1 - alpha) * x_target + noise
+                true_residual = x_target - x_estimate
 
-            loss_residual = loss_residual / num_steps
+            tokens_r, ex_pos_r, mask_pos_r = self.build_tokens_with_estimate(
+                A, b_ctx, x_ctx, b_query, x_estimate
+            )
+            pred_residual = self.model(tokens_r, ex_pos_r, mask_pos_r).vector_output
+
+            loss_residual = F.mse_loss(pred_residual, true_residual)
             total_loss = total_loss + self.config.residual_weight * loss_residual
             losses["residual"] = loss_residual.item()
         else:
@@ -418,7 +412,7 @@ def main():
     parser.add_argument("--training_steps", type=int, default=50000)
     parser.add_argument("--residual_weight", type=float, default=0.5)
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--train_iterations", type=int, default=3)
+    parser.add_argument("--noise_scale", type=float, default=0.5)
     # Model architecture
     parser.add_argument("--n_layer", type=int, default=6)
     parser.add_argument("--n_embd", type=int, default=128)
@@ -450,7 +444,7 @@ def main():
         lr=args.lr,
         kappa_min=args.kappa_min,
         kappa_max=args.kappa_max,
-        train_iterations=args.train_iterations,
+        noise_scale=args.noise_scale,
         curriculum=args.curriculum,
         curriculum_warmup=args.curriculum_warmup,
     )
