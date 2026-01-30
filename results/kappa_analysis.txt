@@ -1,0 +1,90 @@
+============================================================
+SECTION 3: KAPPA RANGE ANALYSIS
+============================================================
+
+Loading model from results/section2/model.pt
+
+Testing at each kappa point:
+----------------------------------------------------------------------
+
+kappa = 1
+  MSE: 0.000075 -> 0.000055
+  Improvement: 1.33x, Converged: True
+
+kappa = 2
+  MSE: 0.000050 -> 0.000033
+  Improvement: 1.42x, Converged: True
+
+kappa = 5
+  MSE: 0.000060 -> 0.000057
+  Improvement: 1.09x, Converged: True
+
+kappa = 10
+  MSE: 0.000137 -> 0.000116
+  Improvement: 1.16x, Converged: True
+
+kappa = 20
+  MSE: 0.000229 -> 0.000257
+  Improvement: 1.07x, Converged: True
+
+kappa = 50
+  MSE: 0.000768 -> 0.000777
+  Improvement: 1.07x, Converged: True
+
+kappa = 100
+  MSE: 0.001689 -> 0.001569
+  Improvement: 1.08x, Converged: True
+
+kappa = 150
+  MSE: 0.002822 -> 0.002659
+  Improvement: 1.06x, Converged: True
+
+kappa = 200
+  MSE: 0.003876 -> 0.003591
+  Improvement: 1.09x, Converged: True
+
+kappa = 300
+  MSE: 0.006922 -> 0.006346
+  Improvement: 1.09x, Converged: True
+
+kappa = 500
+  MSE: 0.011608 -> 0.010717
+  Improvement: 1.09x, Converged: True
+
+----------------------------------------------------------------------
+Finding failure threshold...
+  kappa=1: improvement=1.266
+  kappa=5: improvement=1.203
+  kappa=10: improvement=1.120
+  kappa=25: improvement=1.146
+  kappa=50: improvement=1.130
+  kappa=75: improvement=1.141
+  kappa=100: improvement=1.073
+  kappa=150: improvement=1.044
+  kappa=200: improvement=1.067
+  kappa=300: improvement=1.075
+  kappa=500: improvement=1.080
+  kappa=750: improvement=1.095
+  kappa=1000: improvement=1.059
+
+======================================================================
+KAPPA RANGE ANALYSIS REPORT
+======================================================================
+
+| kappa | MSE_iter0 | MSE_final | improvement_factor | converged |
+|-------|-----------|-----------|-------------------|-----------|
+|     1 |  0.000075 |  0.000055 |              1.33 | Yes       |
+|     2 |  0.000050 |  0.000033 |              1.42 | Yes       |
+|     5 |  0.000060 |  0.000057 |              1.09 | Yes       |
+|    10 |  0.000137 |  0.000116 |              1.16 | Yes       |
+|    20 |  0.000229 |  0.000257 |              1.07 | Yes       |
+|    50 |  0.000768 |  0.000777 |              1.07 | Yes       |
+|   100 |  0.001689 |  0.001569 |              1.08 | Yes       |
+|   150 |  0.002822 |  0.002659 |              1.06 | Yes       |
+|   200 |  0.003876 |  0.003591 |              1.09 | Yes       |
+|   300 |  0.006922 |  0.006346 |              1.09 | Yes       |
+|   500 |  0.011608 |  0.010717 |              1.09 | Yes       |
+
+----------------------------------------------------------------------
+No failure threshold detected in tested range
+======================================================================

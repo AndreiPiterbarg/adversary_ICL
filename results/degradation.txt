@@ -1,0 +1,37 @@
+============================================================
+TESTING: NAIVE REFINEMENT (EXPECTED TO FAIL)
+============================================================
+
+kappa in [1, 10]
+  Iteration 0 (standard ICL): MSE = 7.899412e-05
+  Iteration 1 (naive refine): MSE = 6.792243e-01 (8598x degradation)
+  Iteration 2 (naive refine): MSE = 6.701026e-01 (8483x degradation)
+  Iteration 3 (naive refine): MSE = 7.044435e-01 (8918x degradation)
+  Iteration 4 (naive refine): MSE = 6.824579e-01 (8639x degradation)
+
+kappa in [10, 50]
+  Iteration 0 (standard ICL): MSE = 3.640783e-04
+  Iteration 1 (naive refine): MSE = 4.490666e-01 (1233x degradation)
+  Iteration 2 (naive refine): MSE = 4.508598e-01 (1238x degradation)
+  Iteration 3 (naive refine): MSE = 4.988951e-01 (1370x degradation)
+  Iteration 4 (naive refine): MSE = 4.782574e-01 (1314x degradation)
+
+kappa in [50, 100]
+  Iteration 0 (standard ICL): MSE = 1.120577e-03
+  Iteration 1 (naive refine): MSE = 4.193469e-01 (374x degradation)
+  Iteration 2 (naive refine): MSE = 4.244742e-01 (379x degradation)
+  Iteration 3 (naive refine): MSE = 4.727580e-01 (422x degradation)
+  Iteration 4 (naive refine): MSE = 4.567863e-01 (408x degradation)
+
+kappa in [100, 200]
+  Iteration 0 (standard ICL): MSE = 2.547340e-03
+  Iteration 1 (naive refine): MSE = 4.017088e-01 (158x degradation)
+  Iteration 2 (naive refine): MSE = 4.083458e-01 (160x degradation)
+  Iteration 3 (naive refine): MSE = 4.567808e-01 (179x degradation)
+  Iteration 4 (naive refine): MSE = 4.434034e-01 (174x degradation)
+
+============================================================
+PHENOMENON SUMMARY
+============================================================
+
+Average degradation factor: 2634x

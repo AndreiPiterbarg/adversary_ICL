@@ -1,0 +1,40 @@
+============================================================
+SECTION 4: EXTRAPOLATION TESTS
+============================================================
+
+============================================================
+KAPPA EXTRAPOLATION
+============================================================
+kappa=  10 [IN-DIST]: MSE 0.000128 -> 0.000105, improvement=1.19x
+kappa=  50 [IN-DIST]: MSE 0.000749 -> 0.000706, improvement=1.09x
+kappa= 100 [IN-DIST]: MSE 0.001889 -> 0.001785, improvement=1.06x
+kappa= 150 [EXTRAP]: MSE 0.002870 -> 0.002740, improvement=1.06x
+kappa= 200 [EXTRAP]: MSE 0.003774 -> 0.003583, improvement=1.08x
+kappa= 300 [EXTRAP]: MSE 0.007241 -> 0.006990, improvement=1.05x
+kappa= 500 [EXTRAP]: MSE 0.010820 -> 0.009936, improvement=1.09x
+kappa=1000 [EXTRAP]: MSE 0.021147 -> 0.019975, improvement=1.07x
+
+============================================================
+ITERATION EXTRAPOLATION
+============================================================
+iterations= 5: optimal=1, degradation_start=2
+iterations=10: optimal=1, degradation_start=2
+iterations=15: optimal=1, degradation_start=2
+iterations=20: optimal=12, degradation_start=16
+iterations=30: optimal=1, degradation_start=2
+iterations=50: optimal=1, degradation_start=2
+
+============================================================
+FAILURE MODE ANALYSIS
+============================================================
+kappa= 100: cos_sim=0.295, mag_ratio=0.685, dir_ok=False, mag_ok=True
+kappa= 300: cos_sim=0.321, mag_ratio=0.531, dir_ok=False, mag_ok=True
+kappa= 500: cos_sim=0.286, mag_ratio=0.490, dir_ok=False, mag_ok=False
+kappa=1000: cos_sim=0.294, mag_ratio=0.422, dir_ok=False, mag_ok=False
+
+============================================================
+SUMMARY
+============================================================
+Kappa failure threshold: None
+Optimal iterations: 1
+Degradation starts at: 2

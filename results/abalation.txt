@@ -1,0 +1,15 @@
+============================================================
+ABLATION STUDY SUMMARY
+============================================================
+
+Improvement Fractions (% of samples that improved):
+  naive_baseline: 0.0%
+  role_embedding_only: 0.0%
+  dual_objective_only: 52.5%
+  full_approach_c: 72.0%
+
+Contributions:
+  Role embedding alone: +0.0%
+  Dual objective alone: +52.5%
+  Combined: +72.0%
+  Synergy: +19.5%
