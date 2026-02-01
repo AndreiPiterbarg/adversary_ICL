@@ -34,6 +34,7 @@ class ComponentModelConfig:
     max_examples: int = 64
     dropout: float = 0.0
     output_bias: bool = True
+    max_iterations: int = 0  # 0 = no iteration embedding
 
     def to_transformer_config(self) -> TransformerConfig:
         """Convert to TransformerConfig for backbone."""
@@ -85,6 +86,12 @@ class ComponentTransformerModel(nn.Module):
             max_examples=config.max_examples,
         )
 
+        # Iteration embedding (for multi-step backprop)
+        if config.max_iterations > 0:
+            self.iteration_embedding = nn.Embedding(config.max_iterations, config.n_embd)
+        else:
+            self.iteration_embedding = None
+
         # Transformer backbone
         transformer_config = config.to_transformer_config()
         self.backbone = CustomGPTBackbone(transformer_config)
@@ -96,6 +103,20 @@ class ComponentTransformerModel(nn.Module):
             bias=config.output_bias,
         )
 
+    def get_iteration_embedding(self, iteration_index: int) -> torch.Tensor:
+        """Get embedding for a given refinement iteration index.
+
+        Args:
+            iteration_index: Which refinement step (0-indexed).
+
+        Returns:
+            Embedding tensor of shape (n_embd,), or zeros if disabled.
+        """
+        if self.iteration_embedding is None:
+            return torch.zeros(self.n_embd, device=next(self.parameters()).device)
+        idx = min(iteration_index, self.config.max_iterations - 1)
+        return self.iteration_embedding.weight[idx]
+
     def forward(
         self,
         tokens: torch.Tensor,
@@ -103,6 +124,7 @@ class ComponentTransformerModel(nn.Module):
         mask_positions: torch.Tensor,
         return_hidden: bool = False,
         return_attention: bool = False,
+        iteration_index: Optional[int] = None,
     ) -> ComponentModelOutput:
         """
         Forward pass.
@@ -113,6 +135,7 @@ class ComponentTransformerModel(nn.Module):
             mask_positions: MASK token position, shape (batch_size,)
             return_hidden: Whether to return hidden states
             return_attention: Whether to return attention maps
+            iteration_index: Which refinement iteration (for iteration embedding)
 
         Returns:
             ComponentModelOutput with predictions
@@ -121,6 +144,12 @@ class ComponentTransformerModel(nn.Module):
 
         # Add example-level positional encoding
         tokens_with_pos = self.positional_encoder(tokens, example_positions)
+
+        # Add iteration embedding if enabled and provided
+        if iteration_index is not None and self.iteration_embedding is not None:
+            idx = min(iteration_index, self.config.max_iterations - 1)
+            iter_emb = self.iteration_embedding.weight[idx]  # (n_embd,)
+            tokens_with_pos = tokens_with_pos + iter_emb.unsqueeze(0).unsqueeze(0)
 
         # Pass through transformer backbone
         backbone_output = self.backbone(
