@@ -435,7 +435,7 @@ def generate_analysis_report(results: Dict[str, Dict]) -> str:
     # Summary table
     lines.append("\nSUMMARY: Best-fit algorithm by kappa range")
     lines.append("-" * 70)
-    lines.append(f"{'Kappa Range':<15} {'Best Algorithm':<20} {'Cosine Sim':<12} {'R²':<12}")
+    lines.append(f"{'Kappa Range':<15} {'Best Algorithm':<20} {'Cosine Sim':<12} {'R^2':<12}")
     lines.append("-" * 70)
 
     for kappa_key, algo_results in results.items():
@@ -446,14 +446,14 @@ def generate_analysis_report(results: Dict[str, Dict]) -> str:
         )
         cos_sim = algo_results[best_algo]["cosine_similarity"]["mean"]
         r_sq = algo_results[best_algo]["r_squared"]["mean"]
-        lines.append(f"κ ∈ [{kappa_key}]".ljust(15) + f"{best_algo:<20} {cos_sim:.4f}      {r_sq:.4f}")
+        lines.append(f"kappa [{kappa_key}]".ljust(15) + f"{best_algo:<20} {cos_sim:.4f}      {r_sq:.4f}")
 
     # Detailed results per kappa range
     for kappa_key, algo_results in results.items():
         lines.append(f"\n{'='*70}")
         lines.append(f"KAPPA RANGE: [{kappa_key}]")
         lines.append("=" * 70)
-        lines.append(f"{'Algorithm':<20} {'Cos Sim':<12} {'R²':<12} {'α (optimal)':<12} {'MSE':<12}")
+        lines.append(f"{'Algorithm':<20} {'Cos Sim':<12} {'R^2':<12} {'alpha (opt)':<12} {'MSE':<12}")
         lines.append("-" * 70)
 
         # Sort by cosine similarity descending
@@ -486,10 +486,10 @@ def generate_analysis_report(results: Dict[str, Dict]) -> str:
             newton_best_count += 1
 
     if newton_best_count == len(results):
-        lines.append("• The model appears to learn Newton's method (exact correction)")
+        lines.append("- The model appears to learn Newton's method (exact correction)")
         lines.append("  across all condition number ranges. This is the optimal solution!")
     else:
-        lines.append("• The best-fit algorithm varies with condition number range.")
+        lines.append("- The best-fit algorithm varies with condition number range.")
         lines.append("  This suggests the model may interpolate between algorithms.")
 
     # Check if alpha varies significantly across kappa ranges
@@ -501,7 +501,7 @@ def generate_analysis_report(results: Dict[str, Dict]) -> str:
     if alpha_by_kappa:
         alphas = list(alpha_by_kappa.values())
         if max(alphas) > 2 * min(alphas):
-            lines.append("• The optimal step size (α) varies significantly with kappa,")
+            lines.append("- The optimal step size (alpha) varies significantly with kappa,")
             lines.append("  suggesting the model adapts its behavior to problem difficulty.")
 
     return "\n".join(lines)

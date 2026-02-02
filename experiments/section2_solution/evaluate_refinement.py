@@ -286,12 +286,12 @@ def test_contraction(model, config: EvalConfig, device):
         print(f"  {'iter':<6} {'||error||':<14} {'||correction||':<14} {'ratio':<10}")
         print(f"  {'-'*44}")
         prev_err = np.mean(error_norms[0])
-        print(f"  {0:<6} {prev_err:.6f}     {'—':<14} {'—':<10}")
+        print(f"  {0:<6} {prev_err:.6f}     {'--':<14} {'--':<10}")
         for i in range(1, min(config.max_iterations, 8)):
             err = np.mean(error_norms[i])
             corr = np.mean(correction_norms[i])
             ratio = err / prev_err if prev_err > 0 else float('inf')
-            shrinking = "✓" if ratio < 1 else "✗"
+            shrinking = "Y" if ratio < 1 else "N"
             print(f"  {i:<6} {err:.6f}     {corr:.6f}     {ratio:.4f} {shrinking}")
             prev_err = err
 

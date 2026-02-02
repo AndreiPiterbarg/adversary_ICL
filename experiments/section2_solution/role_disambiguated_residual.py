@@ -67,6 +67,11 @@ class Config:
     kappa_min: float = 1.0
     kappa_max: float = 100.0
 
+    # Multi-step unrolled training
+    unroll_steps: int = 0             # K refinement steps to unroll (0 = off, original behavior)
+    unroll_warmup: int = 15000        # Start unrolling after this many steps
+    unroll_loss_weighting: str = "increasing"  # "uniform" | "increasing" | "last_only"
+
     # Curriculum training (optional)
     curriculum: bool = False
     curriculum_warmup: int = 10000
@@ -139,7 +144,7 @@ class ResidualTrainer:
         A_emb = embedders.matrix(A) + matrix_role
         b_flat = b_ctx.reshape(B * K, d)
         x_flat = x_ctx.reshape(B * K, d)
-        n_embd = embedders.vector(b_flat).shape[-1]
+        n_embd = self.model.n_embd
 
         b_emb = embedders.vector(b_flat).reshape(B, K, n_embd) + bias_role
         x_emb = embedders.vector(x_flat).reshape(B, K, n_embd) + output_role
@@ -152,12 +157,14 @@ class ResidualTrainer:
         sep, mask = special.get_sep_batch(B), special.get_mask_batch(B)
         tokens[:, 0], tokens[:, 1] = sep, A_emb
 
-        for i in range(K):
-            idx = 2 + i * 3
-            tokens[:, idx] = sep
-            tokens[:, idx + 1] = b_emb[:, i]
-            tokens[:, idx + 2] = x_emb[:, i]
-            ex_pos[:, idx:idx + 3] = i + 1
+        ctx_offsets = 2 + torch.arange(K, device=device) * 3
+        tokens[:, ctx_offsets] = sep.unsqueeze(1).expand(B, K, n_embd)
+        tokens[:, ctx_offsets + 1] = b_emb
+        tokens[:, ctx_offsets + 2] = x_emb
+        pos_vals = torch.arange(1, K + 1, device=device)
+        ex_pos[:, ctx_offsets] = pos_vals
+        ex_pos[:, ctx_offsets + 1] = pos_vals
+        ex_pos[:, ctx_offsets + 2] = pos_vals
 
         q_idx = 2 + K * 3
         tokens[:, q_idx] = sep
@@ -193,7 +200,7 @@ class ResidualTrainer:
         A_emb = embedders.matrix(A) + matrix_role
         b_flat = b_ctx.reshape(B * K, d)
         x_flat = x_ctx.reshape(B * K, d)
-        n_embd = embedders.vector(b_flat).shape[-1]
+        n_embd = self.model.n_embd
 
         b_emb = embedders.vector(b_flat).reshape(B, K, n_embd) + bias_role
         x_emb = embedders.vector(x_flat).reshape(B, K, n_embd) + output_role
@@ -207,12 +214,14 @@ class ResidualTrainer:
         sep, mask = special.get_sep_batch(B), special.get_mask_batch(B)
         tokens[:, 0], tokens[:, 1] = sep, A_emb
 
-        for i in range(K):
-            idx = 2 + i * 3
-            tokens[:, idx] = sep
-            tokens[:, idx + 1] = b_emb[:, i]
-            tokens[:, idx + 2] = x_emb[:, i]
-            ex_pos[:, idx:idx + 3] = i + 1
+        ctx_offsets = 2 + torch.arange(K, device=device) * 3
+        tokens[:, ctx_offsets] = sep.unsqueeze(1).expand(B, K, n_embd)
+        tokens[:, ctx_offsets + 1] = b_emb
+        tokens[:, ctx_offsets + 2] = x_emb
+        pos_vals = torch.arange(1, K + 1, device=device)
+        ex_pos[:, ctx_offsets] = pos_vals
+        ex_pos[:, ctx_offsets + 1] = pos_vals
+        ex_pos[:, ctx_offsets + 2] = pos_vals
 
         q_idx = 2 + K * 3
         tokens[:, q_idx] = sep
@@ -223,9 +232,102 @@ class ResidualTrainer:
 
         return tokens, ex_pos, torch.full((B,), seq_len - 1, dtype=torch.long, device=device)
 
+    def _build_refinement_context(
+        self, A: torch.Tensor, b_ctx: torch.Tensor, x_ctx: torch.Tensor, b_query: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
+        """Build token template for refinement iterations (everything except the estimate).
+
+        Returns (tokens_template, ex_pos, mask_pos, estimate_idx) where estimate_idx
+        is the position where x_estimate should be injected.
+        """
+        B, K = b_ctx.shape[:2]
+        d, device = self.d, self.device
+
+        embedders = self.model.embedders
+        special = self.model.special_tokens
+        n_embd = self.model.n_embd
+
+        matrix_role = self._get_role('matrix')
+        bias_role = self._get_role('bias')
+        output_role = self._get_role('output')
+
+        A_emb = embedders.matrix(A) + matrix_role
+        b_flat = b_ctx.reshape(B * K, d)
+        x_flat = x_ctx.reshape(B * K, d)
+
+        b_emb = embedders.vector(b_flat).reshape(B, K, n_embd) + bias_role
+        x_emb = embedders.vector(x_flat).reshape(B, K, n_embd) + output_role
+        b_q_emb = embedders.vector(b_query) + bias_role
+
+        seq_len = 3 * K + 6
+        tokens_template = torch.zeros(B, seq_len, n_embd, device=device)
+        ex_pos = torch.zeros(B, seq_len, dtype=torch.long, device=device)
+
+        sep, mask = special.get_sep_batch(B), special.get_mask_batch(B)
+        tokens_template[:, 0], tokens_template[:, 1] = sep, A_emb
+
+        ctx_offsets = 2 + torch.arange(K, device=device) * 3
+        tokens_template[:, ctx_offsets] = sep.unsqueeze(1).expand(B, K, n_embd)
+        tokens_template[:, ctx_offsets + 1] = b_emb
+        tokens_template[:, ctx_offsets + 2] = x_emb
+        pos_vals = torch.arange(1, K + 1, device=device)
+        ex_pos[:, ctx_offsets] = pos_vals
+        ex_pos[:, ctx_offsets + 1] = pos_vals
+        ex_pos[:, ctx_offsets + 2] = pos_vals
+
+        q_idx = 2 + K * 3
+        estimate_idx = q_idx + 2
+        tokens_template[:, q_idx] = sep
+        tokens_template[:, q_idx + 1] = b_q_emb
+        # estimate_idx slot left as zeros — filled by _inject_estimate
+        tokens_template[:, q_idx + 3] = mask
+        ex_pos[:, q_idx:q_idx + 4] = K + 1
+
+        mask_pos = torch.full((B,), seq_len - 1, dtype=torch.long, device=device)
+        return tokens_template, ex_pos, mask_pos, estimate_idx
+
+    def _inject_estimate(
+        self, tokens_template: torch.Tensor, estimate_idx: int, x_estimate: torch.Tensor
+    ) -> torch.Tensor:
+        """Clone the template and inject the embedded estimate at the given position."""
+        estimate_role = self._get_role('estimate')
+        x_est_emb = self.model.embedders.vector(x_estimate) + estimate_role
+        tokens = tokens_template.clone()
+        tokens[:, estimate_idx] = x_est_emb
+        return tokens
+
+    def _compute_unroll_weights(self, K: int) -> List[float]:
+        """Compute normalized loss weights for K unrolled steps."""
+        if self.config.unroll_loss_weighting == "last_only":
+            weights = [0.0] * (K - 1) + [1.0]
+        elif self.config.unroll_loss_weighting == "increasing":
+            raw = [float(i + 1) for i in range(K)]
+            total = sum(raw)
+            weights = [w / total for w in raw]
+        else:  # uniform
+            weights = [1.0 / K] * K
+        return weights
+
+    def _use_unrolled_training(self) -> bool:
+        """Whether to use multi-step unrolled training on this step."""
+        return (self.config.unroll_steps > 0
+                and self.current_step >= self.config.unroll_warmup)
+
     def training_step(self, optimizer: Adam) -> Dict[str, float]:
-        """One training step with dual objective (direct + residual loss)."""
-        B, K, d = self.config.batch_size, self.config.num_context, self.d
+        """One training step with dual objective (direct + residual loss).
+
+        When unroll_steps > 0 and past unroll_warmup, replaces the synthetic
+        residual training with K unrolled refinement steps through the model's
+        own predictions, exposing it to its own correction errors.
+        """
+        use_unroll = self._use_unrolled_training()
+        # Reduce batch size during unrolled steps to fit in memory
+        if use_unroll:
+            B = max(16, self.config.batch_size // max(1, self.config.unroll_steps))
+        else:
+            B = self.config.batch_size
+
+        K, d = self.config.num_context, self.d
         device = self.device
 
         kappa_min, kappa_max = self.get_kappa_range(self.current_step)
@@ -251,30 +353,48 @@ class ResidualTrainer:
         total_loss = total_loss + (1 - self.config.residual_weight) * loss_direct
         losses["direct"] = loss_direct.item()
 
-        # Part 2: Residual prediction loss
+        # Part 2: Residual training
         if self.config.residual_weight > 0:
-            with torch.no_grad():
-                # Interpolate between pred_0 (far from x*) and x_target (at x*)
-                # so the model sees the full range of estimate qualities:
-                # alpha≈1: learns initial correction, alpha≈0: learns to output ~0
-                # Squaring biases toward pred_0 (most samples have large alpha)
-                # while still covering near-x* estimates for fixed-point stability
-                alpha = torch.rand(B, 1, device=device) ** 0.5
-                noise = torch.randn_like(pred_0) * (
-                    torch.rand(B, 1, device=device) * self.config.noise_scale
+            if use_unroll:
+                # Multi-step unrolled training: chain K corrections through the model
+                unroll_K = self.config.unroll_steps
+                weights = self._compute_unroll_weights(unroll_K)
+                x_current = pred_0  # gradient attached — flows through the chain
+
+                # Cache context tokens — only the estimate slot changes each iteration
+                tokens_template, ex_pos_r, mask_pos_r, estimate_idx = \
+                    self._build_refinement_context(A, b_ctx, x_ctx, b_query)
+
+                unrolled_loss = torch.tensor(0.0, device=device)
+                for k in range(unroll_K):
+                    tokens_r = self._inject_estimate(tokens_template, estimate_idx, x_current)
+                    correction = self.model(tokens_r, ex_pos_r, mask_pos_r).vector_output
+                    x_current = x_current + correction
+                    loss_k = F.mse_loss(x_current, x_target)
+                    unrolled_loss = unrolled_loss + weights[k] * loss_k
+                    losses[f"unroll_{k+1}"] = loss_k.item()
+
+                total_loss = total_loss + self.config.residual_weight * unrolled_loss
+                losses["residual"] = unrolled_loss.item()
+            else:
+                # Original single-step synthetic estimate training
+                with torch.no_grad():
+                    alpha = torch.rand(B, 1, device=device) ** 0.5
+                    noise = torch.randn_like(pred_0) * (
+                        torch.rand(B, 1, device=device) * self.config.noise_scale
+                    )
+                    x_estimate = alpha * pred_0.detach() + (1 - alpha) * x_target + noise
+                    true_residual = x_target - x_estimate
+
+                tokens_r, ex_pos_r, mask_pos_r = self.build_tokens_with_estimate(
+                    A, b_ctx, x_ctx, b_query, x_estimate
                 )
-                x_estimate = alpha * pred_0.detach() + (1 - alpha) * x_target + noise
-                true_residual = x_target - x_estimate
+                output_r = self.model(tokens_r, ex_pos_r, mask_pos_r)
+                pred_residual = output_r.vector_output
 
-            tokens_r, ex_pos_r, mask_pos_r = self.build_tokens_with_estimate(
-                A, b_ctx, x_ctx, b_query, x_estimate
-            )
-            output_r = self.model(tokens_r, ex_pos_r, mask_pos_r)
-            pred_residual = output_r.vector_output
-
-            loss_residual = F.mse_loss(pred_residual, true_residual)
-            total_loss = total_loss + self.config.residual_weight * loss_residual
-            losses["residual"] = loss_residual.item()
+                loss_residual = F.mse_loss(pred_residual, true_residual)
+                total_loss = total_loss + self.config.residual_weight * loss_residual
+                losses["residual"] = loss_residual.item()
         else:
             losses["residual"] = 0.0
 
@@ -296,6 +416,10 @@ def train(config: Config) -> Tuple[ComponentTransformerModel, List[Dict]]:
     print(f"{'='*60}")
     print(f"Residual weight: {config.residual_weight}")
     print(f"Noise scale: {config.noise_scale}")
+    if config.unroll_steps > 0:
+        print(f"Unrolled training: {config.unroll_steps} steps, warmup at step {config.unroll_warmup}")
+        print(f"Unroll loss weighting: {config.unroll_loss_weighting}")
+        print(f"Effective batch size during unroll: {max(16, config.batch_size // max(1, config.unroll_steps))}")
 
     model_config = ComponentModelConfig(
         d=config.d, n_embd=config.n_embd, n_layer=config.n_layer, n_head=config.n_head,
@@ -371,17 +495,18 @@ def test(model: ComponentTransformerModel, config: Config) -> Dict:
                 mse_history.append(mse)
                 all_mse[0].append(mse)
 
-                # Iterations 1+: Residual refinement
-                for i in range(1, config.test_iterations):
-                    tokens_r, ex_pos_r, mask_pos_r = trainer.build_tokens_with_estimate(
-                        A, b_ctx, x_ctx, b_query, x_current
-                    )
-                    residual = model(tokens_r, ex_pos_r, mask_pos_r).vector_output
-                    x_current = x_current + residual
+                # Iterations 1+: Residual refinement (cache context tokens)
+                if config.test_iterations > 1:
+                    tokens_template, ex_pos_r, mask_pos_r, estimate_idx = \
+                        trainer._build_refinement_context(A, b_ctx, x_ctx, b_query)
+                    for i in range(1, config.test_iterations):
+                        tokens_r = trainer._inject_estimate(tokens_template, estimate_idx, x_current)
+                        residual = model(tokens_r, ex_pos_r, mask_pos_r).vector_output
+                        x_current = x_current + residual
 
-                    mse = F.mse_loss(x_current, x_target).item()
-                    mse_history.append(mse)
-                    all_mse[i].append(mse)
+                        mse = F.mse_loss(x_current, x_target).item()
+                        mse_history.append(mse)
+                        all_mse[i].append(mse)
 
                 improvements.append(mse_history[0] / mse_history[-1] if mse_history[-1] > 0 else 0)
 
@@ -412,6 +537,13 @@ def main():
     parser.add_argument("--n_head", type=int, default=4)
     parser.add_argument("--kappa_min", type=float, default=1.0)
     parser.add_argument("--kappa_max", type=float, default=100.0)
+    parser.add_argument("--unroll_steps", type=int, default=0,
+                        help="K refinement steps to unroll during training (0=off)")
+    parser.add_argument("--unroll_warmup", type=int, default=15000,
+                        help="Start unrolled training after this many steps")
+    parser.add_argument("--unroll_loss_weighting", type=str, default="increasing",
+                        choices=["uniform", "increasing", "last_only"],
+                        help="How to weight losses across unrolled steps")
     parser.add_argument("--curriculum", action="store_true")
     parser.add_argument("--curriculum_warmup", type=int, default=10000)
     parser.add_argument("--test_iterations", type=int, default=5)
@@ -434,6 +566,9 @@ def main():
         kappa_min=args.kappa_min,
         kappa_max=args.kappa_max,
         noise_scale=args.noise_scale,
+        unroll_steps=args.unroll_steps,
+        unroll_warmup=args.unroll_warmup,
+        unroll_loss_weighting=args.unroll_loss_weighting,
         curriculum=args.curriculum,
         curriculum_warmup=args.curriculum_warmup,
     )
