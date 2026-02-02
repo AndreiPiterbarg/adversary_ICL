@@ -1,158 +1,87 @@
-# Self-Refine ICL: Iterative Self-Refinement in Transformer In-Context Learning
+# Self-Refine ICL: Iterative Self-Refinement for In-Context Learning
 
-Research project investigating why naive ICL self-refinement fails catastrophically and proposing a solution using role-based disambiguation.
+Transformers trained on in-context learning (ICL) for solving linear systems (Ax = b) fail catastrophically when asked to iteratively refine their own predictions. This project identifies the failure mechanism and proposes **Role-Disambiguated Residual (RDR)**, an architectural fix using role embeddings to distinguish ground-truth solutions from current estimates. We further show that the trained model learns an approximation of Newton's method across all tested condition number ranges.
 
-## Research Structure
+## Key Findings
 
-This project is organized into four research contributions:
+**1. Naive self-refinement fails.** Feeding the model's prediction back as context causes ~2600x average MSE degradation, because the model cannot distinguish its own estimates from ground-truth context examples.
 
-### 1. Phenomenon: Naive ICL Self-Refinement Fails Catastrophically
-**Problem discovery contribution** - documenting something the field hasn't characterized.
+| Condition number (κ) | Standard ICL MSE | After 1 refinement | Degradation |
+|---|---|---|---|
+| 1–10 | 7.9e-05 | 0.679 | 8,600x |
+| 10–50 | 3.6e-04 | 0.449 | 1,300x |
+| 50–100 | 1.1e-03 | 0.419 | 408x |
+| 100–200 | 2.5e-03 | 0.402 | 174x |
 
+**2. Role-Disambiguated Residual fixes it.** By assigning distinct role embeddings to context solutions (OUTPUT) vs. current estimates (VEC_SECONDARY), and training with a dual objective (direct + residual prediction), the model achieves stable iterative improvement.
+
+**3. The model learns Newton's method.** Hypothesis testing against classical iterative solvers (Richardson, Jacobi, steepest descent, gradient descent, Newton) shows the learned correction aligns with Newton's method (R² > 0.98 across all κ ranges).
+
+| κ range | Best-fit algorithm | Cosine similarity | R² |
+|---|---|---|---|
+| 1–10 | Newton | 0.9998 | 0.9994 |
+| 10–50 | Newton | 0.9991 | 0.9981 |
+| 50–100 | Newton | 0.9968 | 0.9947 |
+| 100–200 | Newton | 0.9922 | 0.9864 |
+
+## Method
+
+**Token composition:**
 ```
-Standard ICL:           MSE = 5.93e-05
-Naive refinement (K=1): MSE = 0.095      ← 1600x worse!
-Naive refinement (K=2): MSE = ???
-...
-```
-
-### 2. Solution: Role-Based Disambiguation
-**Architectural contribution** - a principled fix with potential generality.
-
-| Configuration | Performance |
-|--------------|-------------|
-| No role embedding, no dual objective | 1600x degradation (naive baseline) |
-| Role embedding only | ??? |
-| Dual objective only | ??? |
-| Both (Role-Disambiguated Residual) | ??? (needs optimization) |
-
-### 3. Analysis: What Algorithm Does the Model Learn?
-**Scientific contribution** - the part that makes the paper citable.
-
-For each refinement step, observe:
-- Current estimate: x_k
-- Correction: δ_k = f(context, query, x_k)
-- Next estimate: x_{k+1} = x_k + δ_k
-
-What does δ_k approximate?
-- Richardson iteration?
-- Gradient descent?
-- Newton's method?
-- Something new?
-
-```
-κ ∈ [1, 10]:    Model learns ???
-κ ∈ [50, 100]:  Model learns ???
-κ ∈ [100, 200]: Model learns ???
+token = embed_component(data) + embed_role(role)
 ```
 
-### 4. Bonus: Extrapolation and Classical Solver Comparison
-Compare learned refinement against classical iterative solvers:
-- Jacobi iteration
-- Gauss-Seidel
-- Conjugate Gradient
-
-## Project Structure
-
+**Refinement loop:**
+```python
+x_0 = f(context, query)                  # Initial prediction (standard ICL)
+x_{k+1} = x_k + f(context, query, x_k)  # Iterative refinement
 ```
-Self_Refine_ICL/
-├── experiments/                          # Organized by research section
-│   ├── section1_phenomenon/              # 1. Naive refinement fails
-│   │   └── naive_refinement_failure.py   # Demonstrate 1600x degradation
-│   │
-│   ├── section2_solution/                # 2. Role-based disambiguation
-│   │   ├── role_disambiguated_residual.py # Main approach (residual prediction)
-│   │   ├── ablation_study.py             # Role embedding vs dual objective (???)
-│   │   └── run_comparison.py             # Compare all approaches
-│   │
-│   ├── section3_analysis/                # 3. What algorithm is learned? (???)
-│   │   ├── hypothesis_tests.py           # Richardson, GD, Newton tests
-│   │   └── kappa_range_analysis.py       # Analysis by condition number
-│   │
-│   └── section4_bonus/                   # 4. Classical solver comparison (???)
-│       ├── classical_solvers.py          # Jacobi, GS, CG implementations
-│       └── extrapolation.py              # Test extrapolation capabilities
-│
-├── src/                                  # Core model implementation
-│   ├── curriculum_model/                 # ICL model components
-│   │   ├── component_model.py            # Main ComponentTransformerModel
-│   │   ├── roles.py                      # 6 semantic roles (KEY!)
-│   │   ├── embedders.py                  # Vector/Matrix/Scalar embedders
-│   │   └── ...
-│   │
-│   ├── custom_transformer/               # GPT-style transformer
-│   │   ├── transformer.py                # CustomGPTBackbone
-│   │   └── ...
-│   │
-│   └── data/                             # Data generation utilities
-│       └── spd_sampler.py                # SPD matrix sampling
-│
-├── tests/                                # Test suite
-├── results/                              # Experiment results
-│   ├── section1/
-│   ├── section2/
-│   ├── section3/
-│   └── section4/
-│
-└── scripts/                              # (Legacy) Original experiment scripts
-```
+
+The model is trained with a dual loss:
+- **L_direct**: predict the solution x* from context
+- **L_residual**: predict the correction (x* - x̃) given a noisy estimate x̃ marked with VEC_SECONDARY role
 
 ## Quick Start
 
 ```bash
-# Install dependencies
 pip install torch numpy scipy
 
-# Run Section 1: Demonstrate naive refinement failure
+# 1. Demonstrate naive refinement failure
 python experiments/section1_phenomenon/naive_refinement_failure.py --device cuda
 
-# Run Section 2: Train Role-Disambiguated Residual (residual prediction)
+# 2. Train Role-Disambiguated Residual model
 python experiments/section2_solution/role_disambiguated_residual.py --device cuda
 
-# Run Section 2: Compare all approaches
+# 3. Run full comparison (Baseline vs. Iterative Supervision vs. RDR)
 python experiments/section2_solution/run_comparison.py --device cuda
+
+# 4. Algorithm hypothesis testing
+python experiments/section3_analysis/hypothesis_tests.py --device cuda
+
+# 5. Classical solver comparison and extrapolation
+python experiments/section4_bonus/classical_solvers.py --device cuda
 
 # Run tests
 python -m pytest tests/ -v
 ```
 
-## Key Insight: Role-Based Disambiguation
-
-The model uses **role embeddings** to distinguish:
-- **OUTPUT role**: Ground-truth solutions in context (x*)
-- **VEC_SECONDARY role**: Current estimates during refinement (x̃)
-
-Token composition:
-```
-token = embed_component(data) + embed_role(role)
-```
-
-Query sequence with estimate:
-```
-[SEP, A, SEP, b_1, x_1*, ..., SEP, b_query, x̃, MASK]
-                                              ↑
-                                     VEC_SECONDARY role
-```
-
-## Refinement Algorithm
-
-```python
-x_0 = f(context, query)                 # Initial prediction (standard ICL)
-x_{k+1} = x_k + f(context, query, x_k)  # Refinement iterations
-```
-
 ## Configuration
 
-Key hyperparameters in `experiments/section2_solution/role_disambiguated_residual.py`:
-```python
-d = 4                    # Vector/matrix dimension
-n_embd = 128            # Transformer hidden dimension
-n_layer = 6, n_head = 4 # Transformer architecture
-training_steps = 50000
-residual_weight = 0.5   # Mix of direct/residual loss
-num_context = 5         # Context examples per sample
-```
+Default hyperparameters (see `experiments/section2_solution/role_disambiguated_residual.py`):
 
-## TODO: Items Not Yet Implemented (???)
+| Parameter | Value |
+|---|---|
+| Vector/matrix dimension (d) | 4 |
+| Transformer hidden dim | 128 |
+| Layers / heads | 6 / 4 |
+| Training steps | 50,000 |
+| Residual weight (λ) | 0.5 |
+| Context examples | 5 |
+| Condition number range (κ) | 1–100 |
 
-See `TODO.md` for the complete list of unimplemented features.
+## Requirements
+
+- Python 3.8+
+- PyTorch
+- NumPy
+- SciPy
