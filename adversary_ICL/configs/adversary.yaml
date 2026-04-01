@@ -1,0 +1,28 @@
+# Adversarial search configuration
+# Usage: python -m src.adversary.run --config configs/adversary.yaml
+
+icl_model:
+  run_path: "results/checkpoints/linear_regression/REPLACE_WITH_RUN_ID"
+  step: -1  # -1 = latest checkpoint
+
+task:
+  name: "noisy_linear_regression"
+  n_dims: 20
+  n_points: 41
+
+search:
+  budget: 50000      # total genome evaluations
+  pop_size: 32       # CMA-ES population per generation
+  sigma_init: 0.5    # initial CMA-ES step size
+  seed: 0
+  save_interval: 50  # save checkpoint every N generations
+
+eval:
+  batch_size: 64
+  num_batches: 10    # batches per genome (10 * 64 = 640 eval examples)
+  baselines:
+    - "least_squares"
+    - "averaging"
+
+output:
+  save_dir: "results/adversary_runs"
