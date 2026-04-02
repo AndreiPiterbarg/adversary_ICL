@@ -30,8 +30,10 @@ def _eval_model_on_batch(model, xs, ys, device):
 class GenomeEvaluator:
     """Evaluates a Genome against the ICL model and baselines.
 
-    Uses the train distribution for in-context examples. Evaluates predictions
-    at each position using the standard forward pass (no xs_p loop, fast).
+    Fitness is the mean ratio of ICL error to best baseline error over the
+    learning curve, computed only at points where the baseline has meaningful
+    error. This is fully scale-invariant: the adversary cannot gain fitness
+    by inflating input/output magnitudes.
     """
 
     def __init__(
@@ -52,7 +54,7 @@ class GenomeEvaluator:
         self.num_batches = num_batches
 
         if baseline_names is None:
-            baseline_names = ["least_squares", "averaging"]
+            baseline_names = ["ridge", "least_squares", "averaging"]
         self.baselines = self._build_baselines(baseline_names)
 
         # Get device from model
@@ -64,6 +66,7 @@ class GenomeEvaluator:
     def _build_baselines(self, names: list[str]) -> list:
         name_to_cls = {
             "least_squares": (models.LeastSquaresModel, {}),
+            "ridge": (models.RidgeRegressionModel, {"alpha": 1.0}),
             "averaging": (models.AveragingModel, {}),
             "nn_3": (models.NNModel, {"n_neighbors": 3}),
         }
@@ -90,16 +93,16 @@ class GenomeEvaluator:
             )
 
     def _evaluate_inner(self, genome: Genome) -> EvalResult:
-        # Decode genome
-        L_train = genome.decode_L("L_train")
-        mu_train = genome.decode_mu("mu_train")
-        w = genome.decode_weights()
+        # Decode genome (train = test, tied distributions)
+        L = genome.decode_L_normalized()
+        mu = genome.decode_mu()
+        w = genome.decode_weights()  # unit-normalized
         noise_std = genome.decode_noise_std()
 
-        # Build sampler from adversary's covariance
-        sampler = GaussianSampler(self.n_dims, bias=mu_train, scale=L_train)
+        # Build sampler from adversary's covariance (same for train and test)
+        sampler = GaussianSampler(self.n_dims, bias=mu, scale=L)
 
-        # Build task with adversary-controlled weights
+        # Build task with adversary-controlled weight direction
         # pool_dict needs shape (num_tasks, n_dims, 1)
         pool_dict = {"w": w.unsqueeze(0).unsqueeze(-1).expand(self.batch_size, -1, -1)}
 
@@ -118,7 +121,7 @@ class GenomeEvaluator:
 
             # Generate ys using the adversary's task parameters
             task = get_task_sampler(
-                "noisy_linear_regression", self.n_dims, self.batch_size,
+                self.task_name, self.n_dims, self.batch_size,
                 pool_dict=pool_dict, noise_std=noise_std,
             )()
             ys = task.evaluate(xs)
@@ -129,7 +132,7 @@ class GenomeEvaluator:
                     icl_curve=np.zeros(self.n_points), is_valid=False,
                 )
 
-            # ICL model: single forward pass (fast!)
+            # ICL model: single forward pass
             pred_icl = _eval_model_on_batch(self.icl_model, xs, ys, self.device)
             icl_err = ((pred_icl - ys) ** 2).mean(dim=0)  # (n_points,)
             all_icl_err.append(icl_err)
@@ -146,40 +149,32 @@ class GenomeEvaluator:
         for name, err_list in all_baseline_err.items():
             baseline_curves[name] = torch.stack(err_list).mean(dim=0).numpy()
 
-        # Compute fitness: additive gap between ICL and best baseline
-        # Use the gap at points where baseline has meaningful error (k < n_dims)
-        # to avoid dividing by near-zero OLS error when the system is determined
+        # Best baseline at each point (element-wise minimum across all baselines)
         best_baseline = np.minimum.reduce(list(baseline_curves.values()))
 
-        # Additive gap: how much worse ICL is in absolute terms
-        gap_curve = icl_curve - best_baseline
+        # --- Scale-invariant fitness: mean log-ratio in the underdetermined regime ---
+        # Use log(ICL/baseline) to prevent a single extreme-ratio point from
+        # dominating the fitness. This makes the adversary optimize for
+        # *consistently* worse ICL across the learning curve, not just one
+        # catastrophic point. We use k=1..n_dims (underdetermined regime).
+        eps = 1e-8
+        k_max = min(self.n_dims, len(icl_curve) - 1)
 
-        # Normalize by the scale of the problem (baseline error at k=1)
-        scale = max(best_baseline[1] if len(best_baseline) > 1 else 1.0, 1e-6)
-        normalized_gap = gap_curve / scale
+        # Compute log-ratio at each point in [1, k_max]
+        log_ratios = []
+        for k in range(1, k_max + 1):
+            denom = max(best_baseline[k], eps)
+            ratio = icl_curve[k] / denom
+            log_ratios.append(np.log(max(ratio, eps)))
 
-        # Take mean gap over all points (captures sustained failure, not just spikes)
-        mean_gap = float(normalized_gap.mean())
-
-        # Also compute ratio but only where baseline has meaningful error
-        meaningful_mask = best_baseline > 0.01 * scale
-        if meaningful_mask.any():
-            ratio_where_meaningful = (icl_curve[meaningful_mask] / best_baseline[meaningful_mask]).mean()
+        if log_ratios:
+            # Fitness = mean log-ratio (0 = ICL matches baseline, >0 = ICL worse)
+            fitness = max(float(np.mean(log_ratios)), 0.0)
         else:
-            ratio_where_meaningful = 1.0
+            fitness = 0.0
 
-        # Fitness = combination of normalized gap and ratio
-        fitness = max(mean_gap, 0.0) + max(float(ratio_where_meaningful) - 1.0, 0.0)
-
-        # Degeneracy penalty: penalize when the task is trivial or impossible
-        baseline_at_1 = best_baseline[1] if len(best_baseline) > 1 else 1.0
-        if baseline_at_1 < 1e-6:
-            fitness *= 0.01  # trivial task
-        elif baseline_at_1 > 1e4:
-            fitness *= 1e4 / baseline_at_1  # impossible task
-
-        # Descriptors
-        spectrum = genome.eigenvalues("L_train")
+        # Descriptors for post-hoc analysis
+        spectrum = genome.eigenvalues()
         descriptors = self._compute_descriptors(genome, icl_curve, best_baseline, spectrum)
 
         return EvalResult(
@@ -198,36 +193,36 @@ class GenomeEvaluator:
     ) -> dict:
         eps = 1e-8
 
+        # Effective rank
         eff_rank = float(np.sum(spectrum) ** 2 / (np.sum(spectrum ** 2) + eps))
+
+        # Condition number (log10)
         cond = float(spectrum[0] / (spectrum[-1] + eps))
         cond_log = float(np.log10(cond + 1))
 
-        Sigma_train = genome.decode_covariance("L_train").numpy()
-        Sigma_test = genome.decode_covariance("L_test").numpy()
-        train_test_div = float(np.linalg.norm(Sigma_train - Sigma_test, "fro") / self.n_dims)
+        # Peak failure position (where in the learning curve the ratio is largest)
+        ratio_curve = icl_curve / (baseline_curve + eps)
+        peak_pos = float(np.argmax(ratio_curve) / max(len(ratio_curve) - 1, 1))
 
-        gap = icl_curve / (baseline_curve + eps)
-        peak_pos = float(np.argmax(gap) / max(len(gap) - 1, 1))
-
+        # Weight-covariance alignment (using CORRECT covariance L^T @ L)
+        Sigma = genome.decode_covariance().numpy()
         w = genome.decode_weights().numpy()
-        w_norm = w / (np.linalg.norm(w) + eps)
-        eigvecs = np.linalg.eigh(Sigma_train)[1]
-        top_eigvec = eigvecs[:, -1]
-        alignment = float(np.abs(np.dot(w_norm, top_eigvec)))
+        eigvals, eigvecs = np.linalg.eigh(Sigma)
+        top_eigvec = eigvecs[:, -1]  # eigenvector of largest eigenvalue
+        alignment = float(np.abs(np.dot(w, top_eigvec)))
 
+        # Spectral entropy
         p = spectrum / (spectrum.sum() + eps)
         spectral_entropy = float(-np.sum(p * np.log(p + eps)))
 
+        # Noise-to-signal (w is unit, so this is just noise_std)
         noise_std = genome.decode_noise_std()
-        w_norm_val = float(np.linalg.norm(w))
-        nsr = noise_std / (w_norm_val + eps)
 
         return {
             "effective_rank": eff_rank,
             "condition_number_log": cond_log,
-            "train_test_divergence": train_test_div,
             "peak_failure_position": peak_pos,
             "weight_alignment": alignment,
             "spectral_entropy": spectral_entropy,
-            "noise_to_signal": nsr,
+            "noise_std": noise_std,
         }

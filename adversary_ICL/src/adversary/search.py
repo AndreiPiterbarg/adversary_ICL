@@ -107,56 +107,30 @@ class DiagonalCMAES:
         self.generation += 1
 
 
-def cma_search(
+def _run_single_cma(
     evaluator: GenomeEvaluator,
     n_dims: int,
-    budget: int = 50000,
-    pop_size: int = 32,
-    sigma_init: float = 0.5,
-    save_dir: str | None = None,
-    save_interval: int = 50,
-    seed: int = 0,
+    budget: int,
+    pop_size: int,
+    sigma_init: float,
+    seed: int,
+    restart_id: int,
 ) -> list[EvalResult]:
-    """Run CMA-ES adversarial search over the genome space.
-
-    Args:
-        evaluator: Evaluates genomes against ICL model + baselines.
-        n_dims: Dimensionality of the input space (determines genome size).
-        budget: Total number of genome evaluations.
-        pop_size: Population size per CMA-ES generation.
-        sigma_init: Initial step size for CMA-ES.
-        save_dir: Directory to save checkpoints. None = no saving.
-        save_interval: Save checkpoint every N generations.
-        seed: Random seed.
-
-    Returns:
-        List of all EvalResults from the search.
-    """
-    genome_size = Genome.flat_size(n_dims)
-
-    # Initialize from a structured random genome
+    """Run a single CMA-ES restart. Returns list of EvalResults."""
     rng = np.random.default_rng(seed)
     x0 = Genome.random_structured(n_dims, rng).raw
 
     es = DiagonalCMAES(x0, sigma_init, pop_size, seed)
 
-    all_results: list[EvalResult] = []
+    results: list[EvalResult] = []
     best_fitness = 0.0
-    best_result: EvalResult | None = None
     generation = 0
     total_evals = 0
 
-    if save_dir:
-        os.makedirs(save_dir, exist_ok=True)
-
-    print(f"Starting CMA-ES search: genome_size={genome_size}, budget={budget}, pop_size={pop_size}")
-
     while total_evals < budget:
-        # Sample population
         solutions = es.ask()
         generation += 1
 
-        # Evaluate each genome
         fitnesses = []
         gen_results = []
 
@@ -164,19 +138,17 @@ def cma_search(
             genome = Genome(n_dims, np.array(sol))
             result = evaluator.evaluate(genome)
             gen_results.append(result)
-
             # CMA-ES minimizes, so negate fitness (we want to maximize gap)
             fitnesses.append(-result.fitness if result.is_valid else 0.0)
 
         es.tell(solutions, fitnesses)
-        all_results.extend(gen_results)
+        results.extend(gen_results)
         total_evals += len(solutions)
 
         # Track best
         for r in gen_results:
             if r.is_valid and r.fitness > best_fitness:
                 best_fitness = r.fitness
-                best_result = r
 
         # Progress report
         valid = [r for r in gen_results if r.is_valid]
@@ -184,39 +156,114 @@ def cma_search(
             gen_best = max(r.fitness for r in valid)
             gen_mean = np.mean([r.fitness for r in valid])
             print(
-                f"Gen {generation:4d} | evals {total_evals:6d}/{budget} | "
-                f"gen_best={gen_best:.3f} gen_mean={gen_mean:.3f} | "
-                f"overall_best={best_fitness:.3f}"
+                f"  [restart {restart_id}] Gen {generation:4d} | evals {total_evals:6d}/{budget} | "
+                f"gen_best={gen_best:.4f} gen_mean={gen_mean:.4f} | "
+                f"best={best_fitness:.4f}"
             )
 
-        # Checkpoint
-        if save_dir and generation % save_interval == 0:
-            _save_checkpoint(save_dir, all_results, es, generation, best_result)
+    return results
 
-    # Final save
+
+def cma_search(
+    evaluator: GenomeEvaluator,
+    n_dims: int,
+    budget: int = 50000,
+    pop_size: int = 32,
+    sigma_init: float = 0.5,
+    num_restarts: int = 5,
+    save_dir: str | None = None,
+    save_interval: int = 50,
+    seed: int = 0,
+) -> list[EvalResult]:
+    """Run multi-restart CMA-ES adversarial search over the genome space.
+
+    The total budget is split evenly across independent restarts, each
+    initialized from a different random structured genome. This dramatically
+    improves coverage of the fitness landscape vs. a single long run.
+
+    Args:
+        evaluator: Evaluates genomes against ICL model + baselines.
+        n_dims: Dimensionality of the input space (determines genome size).
+        budget: Total number of genome evaluations (split across restarts).
+        pop_size: Population size per CMA-ES generation.
+        sigma_init: Initial step size for CMA-ES.
+        num_restarts: Number of independent CMA-ES runs.
+        save_dir: Directory to save checkpoints. None = no saving.
+        save_interval: Save checkpoint every N generations.
+        seed: Base random seed (each restart uses seed + restart_id).
+
+    Returns:
+        List of all EvalResults from all restarts.
+    """
+    genome_size = Genome.flat_size(n_dims)
+    budget_per_restart = budget // num_restarts
+
     if save_dir:
-        _save_checkpoint(save_dir, all_results, es, generation, best_result)
+        os.makedirs(save_dir, exist_ok=True)
 
-    print(f"\nSearch complete. {total_evals} evaluations, best fitness={best_fitness:.4f}")
+    print(
+        f"Starting multi-restart CMA-ES: genome_size={genome_size}, "
+        f"budget={budget}, restarts={num_restarts}, "
+        f"budget_per_restart={budget_per_restart}, pop_size={pop_size}"
+    )
+
+    all_results: list[EvalResult] = []
+    best_fitness = 0.0
+    best_result: EvalResult | None = None
+
+    for restart_id in range(num_restarts):
+        restart_seed = seed + restart_id
+        print(f"\n--- Restart {restart_id + 1}/{num_restarts} (seed={restart_seed}) ---")
+
+        restart_results = _run_single_cma(
+            evaluator=evaluator,
+            n_dims=n_dims,
+            budget=budget_per_restart,
+            pop_size=pop_size,
+            sigma_init=sigma_init,
+            seed=restart_seed,
+            restart_id=restart_id,
+        )
+
+        all_results.extend(restart_results)
+
+        # Track global best
+        for r in restart_results:
+            if r.is_valid and r.fitness > best_fitness:
+                best_fitness = r.fitness
+                best_result = r
+
+        # Report restart summary
+        valid = [r for r in restart_results if r.is_valid]
+        if valid:
+            restart_best = max(r.fitness for r in valid)
+            print(
+                f"  Restart {restart_id} complete: {len(restart_results)} evals, "
+                f"restart_best={restart_best:.4f}, global_best={best_fitness:.4f}"
+            )
+
+        # Save after each restart
+        if save_dir:
+            _save_checkpoint(save_dir, all_results, restart_id + 1, best_result)
+
+    print(f"\nSearch complete. {len(all_results)} total evaluations, best fitness={best_fitness:.4f}")
     if best_result:
         print(f"Best genome: {best_result.genome}")
 
     return all_results
 
 
-def _save_checkpoint(save_dir, all_results, es, generation, best_result):
+def _save_checkpoint(save_dir, all_results, restarts_completed, best_result):
     """Save search state to disk."""
     checkpoint = {
         "results": all_results,
-        "generation": generation,
+        "restarts_completed": restarts_completed,
         "best_result": best_result,
-        "cma_mean": es.mean.copy(),
-        "cma_sigma": es.sigma,
     }
     path = os.path.join(save_dir, "checkpoint.pkl")
     with open(path, "wb") as f:
         pickle.dump(checkpoint, f)
-    print(f"  [saved checkpoint: {len(all_results)} results, gen {generation}]")
+    print(f"  [saved checkpoint: {len(all_results)} results, {restarts_completed} restarts]")
 
 
 def load_checkpoint(save_dir: str) -> dict:
