@@ -11,9 +11,10 @@ task:
   n_points: 41
 
 search:
-  budget: 50000      # total genome evaluations
+  budget: 50000      # total genome evaluations (split across restarts)
   pop_size: 32       # CMA-ES population per generation
   sigma_init: 0.5    # initial CMA-ES step size
+  num_restarts: 5    # independent CMA-ES runs with different seeds
   seed: 0
   save_interval: 50  # save checkpoint every N generations
 
@@ -21,6 +22,7 @@ eval:
   batch_size: 64
   num_batches: 10    # batches per genome (10 * 64 = 640 eval examples)
   baselines:
+    - "ridge"
     - "least_squares"
     - "averaging"
 
