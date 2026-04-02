@@ -19,6 +19,7 @@ sys.path.insert(0, project_root)
 from src.icl.eval import get_model_from_run
 from src.adversary.evaluate import GenomeEvaluator
 from src.adversary.search import cma_search
+from src.adversary.genome import Genome
 from src.adversary.analyze import run_analysis
 
 
@@ -56,13 +57,14 @@ def main():
     eval_config = config.get("eval", {})
     batch_size = eval_config.get("batch_size", 64)
     num_batches = eval_config.get("num_batches", 10)
-    baselines = eval_config.get("baselines", ["least_squares", "averaging"])
+    baselines = eval_config.get("baselines", ["ridge", "least_squares", "averaging"])
 
     # Search config
     search_config = config.get("search", {})
     budget = search_config.get("budget", 50000)
     pop_size = search_config.get("pop_size", 32)
     sigma_init = search_config.get("sigma_init", 0.5)
+    num_restarts = search_config.get("num_restarts", 5)
     seed = search_config.get("seed", 0)
     save_interval = search_config.get("save_interval", 50)
 
@@ -78,9 +80,10 @@ def main():
     )
 
     # Run search
+    genome_size = Genome.flat_size(n_dims)
     print(f"\nStarting adversarial search...")
     print(f"  n_dims={n_dims}, n_points={n_points}, budget={budget}")
-    print(f"  genome_size={evaluator.n_dims * (evaluator.n_dims + 1) // 2 * 2 + evaluator.n_dims * 4 + 1}")
+    print(f"  genome_size={genome_size}, num_restarts={num_restarts}")
     print(f"  save_dir={save_dir}")
 
     results = cma_search(
@@ -89,6 +92,7 @@ def main():
         budget=budget,
         pop_size=pop_size,
         sigma_init=sigma_init,
+        num_restarts=num_restarts,
         save_dir=save_dir,
         save_interval=save_interval,
         seed=seed,

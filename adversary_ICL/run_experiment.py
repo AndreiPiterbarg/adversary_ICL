@@ -18,7 +18,7 @@ import yaml
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
-from src.icl.models import build_model, TransformerModel, LeastSquaresModel, AveragingModel
+from src.icl.models import build_model, TransformerModel, LeastSquaresModel, RidgeRegressionModel, AveragingModel
 from src.icl.schema import AttrDict, load_config
 from src.icl.train import train
 from src.adversary.genome import Genome
@@ -30,9 +30,12 @@ from src.adversary.search import cma_search
 # STEP 1: Train an ICL model
 # ===========================================================================
 
-def train_icl_model(out_dir, train_steps=5000, n_dims=10, n_layer=4, n_head=2, n_embd=64):
-    """Train a small ICL model for linear regression."""
+def train_icl_model(out_dir, train_steps=500000, n_dims=20, n_layer=12, n_head=8, n_embd=256):
+    """Train an ICL model for linear regression matching Garg et al. config."""
     os.makedirs(out_dir, exist_ok=True)
+
+    # n_positions = 2*n_dims + 1 gives enough overdetermination
+    n_points_end = 2 * n_dims + 1
 
     config = {
         "out_dir": out_dir,
@@ -40,7 +43,7 @@ def train_icl_model(out_dir, train_steps=5000, n_dims=10, n_layer=4, n_head=2, n
         "model": {
             "family": "gpt2",
             "n_dims": n_dims,
-            "n_positions": 51,
+            "n_positions": n_points_end,
             "n_embd": n_embd,
             "n_layer": n_layer,
             "n_head": n_head,
@@ -52,24 +55,23 @@ def train_icl_model(out_dir, train_steps=5000, n_dims=10, n_layer=4, n_head=2, n
             "batch_size": 64,
             "learning_rate": 3e-4,
             "train_steps": train_steps,
-            "save_every_steps": train_steps,  # save at end
+            "save_every_steps": train_steps // 5,  # save 5 checkpoints
             "keep_every_steps": -1,
             "resume_id": None,
             "num_tasks": None,
             "num_training_examples": None,
             "curriculum": {
                 "dims": {"start": n_dims, "end": n_dims, "inc": 1, "interval": 2000},
-                "points": {"start": 11, "end": 11, "inc": 2, "interval": 2000},
+                "points": {"start": n_points_end, "end": n_points_end, "inc": 2, "interval": 2000},
             },
         },
         "wandb": {
             "project": "test", "entity": "test", "notes": "", "name": "test",
-            "log_every_steps": 100,
+            "log_every_steps": 500,
         },
     }
 
     args = load_config(config)
-    # Override test_run behavior: we DO want to save
     args.test_run = False
     args.out_dir = out_dir
 
@@ -100,7 +102,7 @@ def train_icl_model(out_dir, train_steps=5000, n_dims=10, n_layer=4, n_head=2, n
 # STEP 2: Quick baseline evaluation (verify model learned something)
 # ===========================================================================
 
-def quick_eval(model, n_dims, n_points=21, batch_size=64, num_batches=5):
+def quick_eval(model, n_dims, n_points=41, batch_size=64, num_batches=10):
     """Quick check that the trained model does ICL on standard Gaussian inputs."""
     from src.icl.samplers import GaussianSampler
     from src.icl.tasks import get_task_sampler
@@ -113,8 +115,10 @@ def quick_eval(model, n_dims, n_points=21, batch_size=64, num_batches=5):
 
     all_icl_err = []
     all_ols_err = []
+    all_ridge_err = []
 
     ols = LeastSquaresModel()
+    ridge = RidgeRegressionModel(alpha=1.0)
 
     for _ in range(num_batches):
         xs = sampler.sample_xs(n_points, batch_size)
@@ -124,35 +128,43 @@ def quick_eval(model, n_dims, n_points=21, batch_size=64, num_batches=5):
         with torch.no_grad():
             pred_icl = model(xs.to(device), ys.to(device)).cpu()
         pred_ols = ols(xs, ys)
+        pred_ridge = ridge(xs, ys)
 
         icl_err = ((pred_icl - ys) ** 2).mean(dim=0)
         ols_err = ((pred_ols - ys) ** 2).mean(dim=0)
+        ridge_err = ((pred_ridge - ys) ** 2).mean(dim=0)
 
         all_icl_err.append(icl_err)
         all_ols_err.append(ols_err)
+        all_ridge_err.append(ridge_err)
 
     icl_err = torch.stack(all_icl_err).mean(dim=0).numpy()
     ols_err = torch.stack(all_ols_err).mean(dim=0).numpy()
+    ridge_err = torch.stack(all_ridge_err).mean(dim=0).numpy()
 
     print(f"\n--- Baseline Evaluation (standard Gaussian inputs) ---")
-    print(f"  {'k':>3s}  {'ICL_err':>10s}  {'OLS_err':>10s}  {'Ratio':>8s}")
-    for k in [0, 2, 5, 10, 15, 20]:
+    print(f"  {'k':>3s}  {'ICL_err':>10s}  {'OLS_err':>10s}  {'Ridge_err':>10s}  {'ICL/Ridge':>10s}")
+    for k in [0, 2, 5, 10, 15, 20, 30, 40]:
         if k < len(icl_err):
-            ratio = icl_err[k] / (ols_err[k] + 1e-8)
-            print(f"  {k:3d}  {icl_err[k]:10.4f}  {ols_err[k]:10.4f}  {ratio:8.2f}x")
+            ratio = icl_err[k] / (ridge_err[k] + 1e-8)
+            print(f"  {k:3d}  {icl_err[k]:10.4f}  {ols_err[k]:10.4f}  {ridge_err[k]:10.4f}  {ratio:10.2f}x")
 
-    # Check: at k=n_dims, ICL should be within ~2x of OLS for a trained model
-    ratio_at_d = icl_err[min(n_dims, len(icl_err)-1)] / (ols_err[min(n_dims, len(icl_err)-1)] + 1e-8)
-    print(f"\n  ICL/OLS ratio at k={n_dims}: {ratio_at_d:.2f}x")
-    return icl_err, ols_err
+    ratio_at_d = icl_err[min(n_dims, len(icl_err)-1)] / (ridge_err[min(n_dims, len(icl_err)-1)] + 1e-8)
+    print(f"\n  ICL/Ridge ratio at k={n_dims}: {ratio_at_d:.2f}x")
+
+    if ratio_at_d > 5.0:
+        print(f"  WARNING: Model may not be fully converged (ICL/Ridge ratio > 5x at k=d)")
+
+    return icl_err, ols_err, ridge_err
 
 
 # ===========================================================================
 # STEP 3: Run adversarial search
 # ===========================================================================
 
-def run_adversary(model, n_dims, n_points=21, budget=1600, pop_size=16, save_dir=None):
-    """Run the adversarial CMA-ES search."""
+def run_adversary(model, n_dims, n_points=41, budget=50000, pop_size=32,
+                  num_restarts=5, save_dir=None):
+    """Run the adversarial multi-restart CMA-ES search."""
     model.eval()
 
     evaluator = GenomeEvaluator(
@@ -160,9 +172,9 @@ def run_adversary(model, n_dims, n_points=21, budget=1600, pop_size=16, save_dir
         task_name="noisy_linear_regression",
         n_dims=n_dims,
         n_points=n_points,
-        batch_size=32,
-        num_batches=5,
-        baseline_names=["least_squares", "averaging"],
+        batch_size=64,
+        num_batches=10,
+        baseline_names=["ridge", "least_squares", "averaging"],
     )
 
     results = cma_search(
@@ -171,8 +183,9 @@ def run_adversary(model, n_dims, n_points=21, budget=1600, pop_size=16, save_dir
         budget=budget,
         pop_size=pop_size,
         sigma_init=0.5,
+        num_restarts=num_restarts,
         save_dir=save_dir,
-        save_interval=20,
+        save_interval=50,
         seed=42,
     )
 
@@ -201,7 +214,7 @@ def analyze_results(results, n_dims, output_dir):
         return
 
     fitnesses = np.array([r.fitness for r in valid])
-    print(f"\nFitness distribution:")
+    print(f"\nFitness distribution (ratio - 1, so 0 = matches baseline):")
     print(f"  Min:    {fitnesses.min():.4f}")
     print(f"  Median: {np.median(fitnesses):.4f}")
     print(f"  Mean:   {fitnesses.mean():.4f}")
@@ -216,30 +229,36 @@ def analyze_results(results, n_dims, output_dir):
     for i, r in enumerate(valid[:top_k]):
         g = r.genome
         spectrum = r.covariance_spectrum
-        print(f"\n  #{i+1}: fitness={r.fitness:.3f}")
-        print(f"    Condition number (train): {g.condition_number('L_train'):.1f}")
-        print(f"    Effective rank (train):   {g.effective_rank('L_train'):.2f}")
-        print(f"    Condition number (test):  {g.condition_number('L_test'):.1f}")
-        print(f"    Noise std:                {g.decode_noise_std():.4f}")
-        print(f"    Weight norm:              {np.linalg.norm(g.decode_weights().numpy()):.3f}")
-        print(f"    Top 5 eigenvalues:        {spectrum[:5].round(3)}")
+        print(f"\n  #{i+1}: fitness={r.fitness:.4f} (ICL is {r.fitness+1:.2f}x worse than baseline)")
+        print(f"    Condition number: {g.condition_number():.1f}")
+        print(f"    Effective rank:   {g.effective_rank():.2f}")
+        print(f"    Noise std:        {g.decode_noise_std():.4f}")
+        print(f"    Top 5 eigenvalues: {spectrum[:5].round(4)}")
         if r.descriptors:
-            print(f"    Train-test divergence:    {r.descriptors.get('train_test_divergence', 0):.3f}")
-            print(f"    Weight-cov alignment:     {r.descriptors.get('weight_alignment', 0):.3f}")
-            print(f"    Peak failure position:    {r.descriptors.get('peak_failure_position', 0):.2f}")
+            print(f"    Weight-cov alignment: {r.descriptors.get('weight_alignment', 0):.3f}")
+            print(f"    Peak failure position: {r.descriptors.get('peak_failure_position', 0):.2f}")
+            print(f"    Spectral entropy:     {r.descriptors.get('spectral_entropy', 0):.3f}")
 
     # Detailed learning curves for top 3
     print(f"\n--- Detailed Learning Curves (Top 3) ---")
     for i, r in enumerate(valid[:3]):
-        print(f"\n  Failure #{i+1} (fitness={r.fitness:.3f}):")
-        print(f"    {'k':>4s}  {'ICL_err':>10s}  {'OLS_err':>10s}  {'Avg_err':>10s}  {'Ratio':>8s}")
+        print(f"\n  Failure #{i+1} (fitness={r.fitness:.4f}):")
+        bl_names = list(r.baseline_curves.keys())
+        header = f"    {'k':>4s}  {'ICL_err':>10s}"
+        for name in bl_names:
+            header += f"  {name:>12s}"
+        header += f"  {'ICL/best':>10s}"
+        print(header)
+
         for k in range(0, len(r.icl_curve), max(1, len(r.icl_curve) // 10)):
             icl_e = r.icl_curve[k]
-            ols_e = r.baseline_curves.get("least_squares", np.zeros_like(r.icl_curve))[k]
-            avg_e = r.baseline_curves.get("averaging", np.zeros_like(r.icl_curve))[k]
-            best_bl = min(ols_e, avg_e)
+            best_bl = min(r.baseline_curves[name][k] for name in bl_names)
             ratio = icl_e / (best_bl + 1e-8)
-            print(f"    {k:4d}  {icl_e:10.4f}  {ols_e:10.4f}  {avg_e:10.4f}  {ratio:8.2f}x")
+            row = f"    {k:4d}  {icl_e:10.4f}"
+            for name in bl_names:
+                row += f"  {r.baseline_curves[name][k]:12.4f}"
+            row += f"  {ratio:10.2f}x"
+            print(row)
 
     # Descriptor correlation analysis
     print(f"\n--- What Predicts Failure? (Spearman Correlations) ---")
@@ -247,9 +266,7 @@ def analyze_results(results, n_dims, output_dir):
 
     desc_keys = list(valid[0].descriptors.keys()) if valid[0].descriptors else []
     extra_features = {
-        "condition_number": [r.genome.condition_number("L_train") for r in valid],
-        "noise_std": [r.genome.decode_noise_std() for r in valid],
-        "weight_norm": [np.linalg.norm(r.genome.decode_weights().numpy()) for r in valid],
+        "condition_number": [r.genome.condition_number() for r in valid],
     }
 
     all_features = {}
@@ -281,8 +298,8 @@ def analyze_results(results, n_dims, output_dir):
         ax.scatter(range(len(all_fit)), all_fit, s=1, alpha=0.3, label="Individual")
         ax.plot(running_best, color="red", linewidth=2, label="Running best")
         ax.set_xlabel("Evaluation #")
-        ax.set_ylabel("Fitness (ICL/baseline ratio)")
-        ax.set_title("Adversarial Search Progress")
+        ax.set_ylabel("Fitness (ICL/baseline ratio - 1)")
+        ax.set_title("Adversarial Search Progress (Multi-Restart)")
         ax.legend()
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, "fitness_over_time.png"), dpi=150)
@@ -290,18 +307,19 @@ def analyze_results(results, n_dims, output_dir):
         print(f"\n  Saved: {output_dir}/fitness_over_time.png")
 
         # Top 5 learning curves
-        fig, axes = plt.subplots(1, min(5, len(valid)), figsize=(4 * min(5, len(valid)), 4))
-        if min(5, len(valid)) == 1:
+        n_plots = min(5, len(valid))
+        fig, axes = plt.subplots(1, n_plots, figsize=(4 * n_plots, 4))
+        if n_plots == 1:
             axes = [axes]
-        for i, (ax, r) in enumerate(zip(axes, valid[:5])):
+        for i, (ax, r) in enumerate(zip(axes, valid[:n_plots])):
             x = np.arange(1, len(r.icl_curve) + 1)
             ax.plot(x, r.icl_curve, label="ICL", linewidth=2)
             for name, curve in r.baseline_curves.items():
                 ax.plot(x, curve, label=name, linestyle="--")
             ax.set_xlabel("k")
             ax.set_ylabel("Squared error")
-            ax.set_title(f"#{i+1} fit={r.fitness:.1f}\ncond={r.genome.condition_number('L_train'):.0f}")
-            ax.legend(fontsize=7)
+            ax.set_title(f"#{i+1} fit={r.fitness:.3f}\ncond={r.genome.condition_number():.0f}")
+            ax.legend(fontsize=6)
             ax.set_yscale("log")
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, "top_failures.png"), dpi=150)
@@ -309,14 +327,14 @@ def analyze_results(results, n_dims, output_dir):
         print(f"  Saved: {output_dir}/top_failures.png")
 
         # Eigenvalue spectra of top 5
-        fig, axes = plt.subplots(1, min(5, len(valid)), figsize=(4 * min(5, len(valid)), 3))
-        if min(5, len(valid)) == 1:
+        fig, axes = plt.subplots(1, n_plots, figsize=(4 * n_plots, 3))
+        if n_plots == 1:
             axes = [axes]
-        for i, (ax, r) in enumerate(zip(axes, valid[:5])):
+        for i, (ax, r) in enumerate(zip(axes, valid[:n_plots])):
             ax.bar(range(len(r.covariance_spectrum)), r.covariance_spectrum)
             ax.set_xlabel("Index")
             ax.set_ylabel("Eigenvalue")
-            ax.set_title(f"#{i+1} cond={r.genome.condition_number('L_train'):.0f}")
+            ax.set_title(f"#{i+1} cond={r.genome.condition_number():.0f}")
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, "top_spectra.png"), dpi=150)
         plt.close()
@@ -324,10 +342,10 @@ def analyze_results(results, n_dims, output_dir):
 
         # Scatter: condition number vs fitness
         fig, ax = plt.subplots(figsize=(8, 5))
-        conds = [r.genome.condition_number("L_train") for r in valid]
+        conds = [r.genome.condition_number() for r in valid]
         ax.scatter(conds, fitnesses, s=5, alpha=0.5)
-        ax.set_xlabel("Condition number (train covariance)")
-        ax.set_ylabel("Fitness")
+        ax.set_xlabel("Condition number (trace-normalized covariance)")
+        ax.set_ylabel("Fitness (ratio - 1)")
         ax.set_title("Condition Number vs ICL Failure")
         ax.set_xscale("log")
         plt.tight_layout()
@@ -347,11 +365,9 @@ def analyze_results(results, n_dims, output_dir):
         "top_5": [
             {
                 "fitness": float(r.fitness),
-                "cond_train": float(r.genome.condition_number("L_train")),
-                "cond_test": float(r.genome.condition_number("L_test")),
-                "eff_rank": float(r.genome.effective_rank("L_train")),
+                "condition_number": float(r.genome.condition_number()),
+                "effective_rank": float(r.genome.effective_rank()),
                 "noise_std": float(r.genome.decode_noise_std()),
-                "weight_norm": float(np.linalg.norm(r.genome.decode_weights().numpy())),
                 "descriptors": r.descriptors,
             }
             for r in valid[:5]
@@ -371,13 +387,14 @@ def analyze_results(results, n_dims, output_dir):
 
 if __name__ == "__main__":
     N_DIMS = 5
-    TRAIN_STEPS = 50000
-    ADVERSARY_BUDGET = 3200  # 200 generations * 16 pop
-    POP_SIZE = 16
+    TRAIN_STEPS = 150000
+    ADVERSARY_BUDGET = 10000  # 5 restarts x 2000 each
+    POP_SIZE = 32
+    NUM_RESTARTS = 5
 
-    checkpoint_dir = os.path.join(ROOT, "results", "checkpoints", "experiment_run")
-    adversary_dir = os.path.join(ROOT, "results", "adversary_runs", "experiment_run")
-    analysis_dir = os.path.join(ROOT, "results", "analysis")
+    checkpoint_dir = os.path.join(ROOT, "results", "checkpoints", "d5_6layer_150k")
+    adversary_dir = os.path.join(ROOT, "results", "adversary_runs", "d5_6layer_150k")
+    analysis_dir = os.path.join(ROOT, "results", "analysis_d5_v2")
 
     print("=" * 70)
     print("STEP 1: Training ICL Transformer")
@@ -387,9 +404,9 @@ if __name__ == "__main__":
         out_dir=checkpoint_dir,
         train_steps=TRAIN_STEPS,
         n_dims=N_DIMS,
-        n_layer=4,
-        n_head=2,
-        n_embd=64,
+        n_layer=6,
+        n_head=4,
+        n_embd=128,
     )
     t_train = time.time() - t0
     print(f"\nTraining time: {t_train:.1f}s")
@@ -400,15 +417,17 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
     model.eval()
-    icl_err, ols_err = quick_eval(model, N_DIMS, n_points=11)
+    n_points = 2 * N_DIMS + 1
+    icl_err, ols_err, ridge_err = quick_eval(model, N_DIMS, n_points=n_points)
 
     print("\n" + "=" * 70)
     print("STEP 3: Adversarial Search")
     print("=" * 70)
     t0 = time.time()
     results = run_adversary(
-        model, N_DIMS, n_points=11,
+        model, N_DIMS, n_points=n_points,
         budget=ADVERSARY_BUDGET, pop_size=POP_SIZE,
+        num_restarts=NUM_RESTARTS,
         save_dir=adversary_dir,
     )
     t_search = time.time() - t0

@@ -26,10 +26,9 @@ def results_to_dataframe(results: list[EvalResult]) -> pd.DataFrame:
             continue
         row = {
             "fitness": r.fitness,
-            "condition_number": r.genome.condition_number("L_train"),
-            "effective_rank": r.genome.effective_rank("L_train"),
+            "condition_number": r.genome.condition_number(),
+            "effective_rank": r.genome.effective_rank(),
             "noise_std": r.genome.decode_noise_std(),
-            "weight_norm": float(np.linalg.norm(r.genome.decode_weights().numpy())),
         }
         row.update(r.descriptors)
         rows.append(row)
@@ -87,26 +86,23 @@ def describe_cluster(results: list[EvalResult], label: int, labels: np.ndarray, 
         return "Empty cluster"
 
     fitnesses = [r.fitness for r in cluster_results]
-    conds = [r.genome.condition_number("L_train") for r in cluster_results]
-    ranks = [r.genome.effective_rank("L_train") for r in cluster_results]
+    conds = [r.genome.condition_number() for r in cluster_results]
+    ranks = [r.genome.effective_rank() for r in cluster_results]
     noises = [r.genome.decode_noise_std() for r in cluster_results]
 
     descs = [r.descriptors for r in cluster_results if r.descriptors]
     if descs:
         alignments = [d.get("weight_alignment", 0) for d in descs]
-        divergences = [d.get("train_test_divergence", 0) for d in descs]
     else:
         alignments = [0]
-        divergences = [0]
 
     return (
         f"Cluster {label} ({len(cluster_results)} elites, "
-        f"mean fitness={np.mean(fitnesses):.2f}): "
+        f"mean fitness={np.mean(fitnesses):.4f}): "
         f"cond_number={np.mean(conds):.1f} +/- {np.std(conds):.1f}, "
         f"eff_rank={np.mean(ranks):.1f}, "
         f"noise={np.mean(noises):.3f}, "
-        f"weight_align={np.mean(alignments):.2f}, "
-        f"train_test_div={np.mean(divergences):.2f}"
+        f"weight_align={np.mean(alignments):.2f}"
     )
 
 
@@ -130,7 +126,7 @@ def plot_top_failures(results: list[EvalResult], output_dir: str, k: int = 5):
             ax.plot(x, curve, label=name, linestyle="--")
         ax.set_xlabel("In-context examples")
         ax.set_ylabel("Squared error")
-        ax.set_title(f"Failure #{i+1} (fitness={r.fitness:.2f})")
+        ax.set_title(f"Failure #{i+1} (fitness={r.fitness:.4f})")
         ax.legend(fontsize=8)
         ax.set_yscale("log")
 
@@ -141,8 +137,8 @@ def plot_top_failures(results: list[EvalResult], output_dir: str, k: int = 5):
         ax.set_xlabel("Eigenvalue index")
         ax.set_ylabel("Eigenvalue")
         ax.set_title(
-            f"Train cov spectrum (cond={r.genome.condition_number('L_train'):.0f}, "
-            f"eff_rank={r.genome.effective_rank('L_train'):.1f})"
+            f"Covariance spectrum (cond={r.genome.condition_number():.0f}, "
+            f"eff_rank={r.genome.effective_rank():.1f})"
         )
 
         plt.tight_layout()
@@ -154,13 +150,15 @@ def plot_fitness_over_time(results: list[EvalResult], output_dir: str):
     """Plot fitness over the course of the search."""
     os.makedirs(output_dir, exist_ok=True)
     fitnesses = [r.fitness for r in results if r.is_valid]
+    if not fitnesses:
+        return
     running_best = np.maximum.accumulate(fitnesses)
 
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.scatter(range(len(fitnesses)), fitnesses, s=1, alpha=0.3, label="Individual")
     ax.plot(running_best, color="red", linewidth=2, label="Running best")
     ax.set_xlabel("Evaluation #")
-    ax.set_ylabel("Fitness (ICL/baseline ratio)")
+    ax.set_ylabel("Fitness (ICL/baseline ratio - 1)")
     ax.set_title("Search Progress")
     ax.legend()
     plt.tight_layout()
@@ -224,7 +222,7 @@ def run_analysis(save_dir: str, output_dir: str | None = None):
     top = top_failures(results, 10)
     print(f"\nTop 10 failures:")
     for i, r in enumerate(top):
-        print(f"  #{i+1}: fitness={r.fitness:.3f} | {r.genome}")
+        print(f"  #{i+1}: fitness={r.fitness:.4f} | {r.genome}")
 
     # DataFrame
     df = results_to_dataframe(results)
@@ -250,8 +248,8 @@ def run_analysis(save_dir: str, output_dir: str | None = None):
     plot_fitness_over_time(results, output_dir)
     plot_correlation_heatmap(df, output_dir)
     plot_descriptor_scatter(df, output_dir, "condition_number_log", "effective_rank")
-    plot_descriptor_scatter(df, output_dir, "noise_to_signal", "weight_alignment")
-    plot_descriptor_scatter(df, output_dir, "train_test_divergence", "peak_failure_position")
+    plot_descriptor_scatter(df, output_dir, "noise_std", "weight_alignment")
+    plot_descriptor_scatter(df, output_dir, "spectral_entropy", "peak_failure_position")
 
     print("Analysis complete.")
     return df, top
