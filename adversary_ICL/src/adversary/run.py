@@ -20,6 +20,7 @@ from src.icl.eval import get_model_from_run
 from src.adversary.evaluate import GenomeEvaluator
 from src.adversary.search import cma_search
 from src.adversary.genome import Genome
+from src.adversary.pipeline_genome import PipelineGenome
 from src.adversary.analyze import run_analysis
 
 
@@ -53,6 +54,18 @@ def main():
     n_points = task_config.get("n_points", 41)
     task_name = task_config.get("name", "noisy_linear_regression")
 
+    # Genome config
+    genome_config = config.get("genome", {})
+    genome_type = genome_config.get("type", "pipeline")
+    genome_cls = PipelineGenome if genome_type == "pipeline" else Genome
+
+    # Parsimony config
+    parsimony_config = config.get("parsimony", {})
+    parsimony_lambda = parsimony_config.get("lambda", 0.0)
+    c_base = parsimony_config.get("c_base", 1.0)
+    c_stage = parsimony_config.get("c_stage", 1.0)
+    c_affine = parsimony_config.get("c_affine", 1.0)
+
     # Eval config
     eval_config = config.get("eval", {})
     batch_size = eval_config.get("batch_size", 64)
@@ -77,13 +90,19 @@ def main():
         batch_size=batch_size,
         num_batches=num_batches,
         baseline_names=baselines,
+        parsimony_lambda=parsimony_lambda,
+        c_base=c_base,
+        c_stage=c_stage,
+        c_affine=c_affine,
     )
 
     # Run search
-    genome_size = Genome.flat_size(n_dims)
-    print(f"\nStarting adversarial search...")
+    genome_size = genome_cls.flat_size(n_dims)
+    print(f"\nStarting adversarial search (genome_type={genome_type})...")
     print(f"  n_dims={n_dims}, n_points={n_points}, budget={budget}")
     print(f"  genome_size={genome_size}, num_restarts={num_restarts}")
+    if parsimony_lambda > 0:
+        print(f"  parsimony: lambda={parsimony_lambda}, c_base={c_base}, c_stage={c_stage}, c_affine={c_affine}")
     print(f"  save_dir={save_dir}")
 
     results = cma_search(
@@ -96,11 +115,20 @@ def main():
         save_dir=save_dir,
         save_interval=save_interval,
         seed=seed,
+        genome_cls=genome_cls,
     )
 
-    # Run analysis
+    # Run analysis (with optional diagnostics)
     print("\n--- Post-hoc Analysis ---")
-    run_analysis(save_dir)
+    diag_config = config.get("diagnostics", {})
+    run_analysis(
+        save_dir,
+        icl_model=model,
+        evaluator=evaluator,
+        run_diagnostics=diag_config.get("enabled", False),
+        diagnostics_top_k=diag_config.get("top_k", 5),
+        diagnostics_list=diag_config.get("run", None),
+    )
 
 
 if __name__ == "__main__":

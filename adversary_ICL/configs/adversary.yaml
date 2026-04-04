@@ -10,11 +10,25 @@ task:
   n_dims: 20
   n_points: 41
 
+# Genome type: "pipeline" (compositional transform pipeline, 2104 dims)
+# or "legacy" (original Cholesky-only genome, 231 dims)
+genome:
+  type: "pipeline"
+  n_stages: 8
+
+# Parsimony pressure: penalizes pipeline complexity to find minimal breaks.
+# Set lambda=0 to disable. Tune with experiments/scripts/tune_lambda.py.
+parsimony:
+  lambda: 0.1
+  c_base: 1.0       # cost of non-Gaussian base distribution
+  c_stage: 1.0      # cost per active (non-identity) transform stage
+  c_affine: 1.0     # cost of affine deviation from identity (per unit Frobenius norm / d)
+
 search:
-  budget: 50000      # total genome evaluations (split across restarts)
-  pop_size: 32       # CMA-ES population per generation
-  sigma_init: 0.5    # initial CMA-ES step size
-  num_restarts: 5    # independent CMA-ES runs with different seeds
+  budget: 200000     # total genome evaluations (larger for 2104-dim pipeline)
+  pop_size: 64       # CMA-ES population per generation
+  sigma_init: 0.3    # initial CMA-ES step size
+  num_restarts: 10   # independent CMA-ES runs with different seeds
   seed: 0
   save_interval: 50  # save checkpoint every N generations
 
@@ -25,6 +39,20 @@ eval:
     - "ridge"
     - "least_squares"
     - "averaging"
+
+# Diagnostics: run on top-k failures after search completes.
+# Expensive diagnostics (retrained_model) excluded by default.
+diagnostics:
+  enabled: true
+  top_k: 5
+  run:
+    - "learning_curve"
+    - "algorithm_id"
+    - "weight_recovery"
+    - "attention"
+    - "linear_probing"
+    - "gradient_attribution"
+    - "pipeline_ablation"
 
 output:
   save_dir: "results/adversary_runs"
