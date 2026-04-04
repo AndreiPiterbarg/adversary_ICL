@@ -129,6 +129,19 @@ class TransformerModel(nn.Module):
         prediction = self._read_out(output)
         return prediction[:, ::2, 0][:, inds]  # predict only on xs
 
+    def forward_with_attention(self, xs, ys):
+        """Forward pass returning both predictions and attention weights.
+
+        Returns:
+            predictions: Tensor (batch, n_points)
+            attentions: Tuple of (batch, n_heads, seq_len, seq_len) per layer
+        """
+        zs = self._combine(xs, ys)
+        embeds = self._read_in(zs)
+        output = self._backbone(inputs_embeds=embeds, output_attentions=True)
+        prediction = self._read_out(output.last_hidden_state)
+        return prediction[:, ::2, 0], output.attentions
+
 
 class NNModel:
     def __init__(self, n_neighbors, weights="uniform"):
