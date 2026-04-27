@@ -1,0 +1,36 @@
+# Adversary config: axes A + B — grid search over stationary FFL distributions.
+# Sweeps (p_w, p_r) independently (paper ties them) and bit bias.
+
+strategy:
+  type: grid
+
+frozen_models:
+  transformer_ckpt: results/flip_flop/baseline/model_final.pt
+  transformer_cfg: flip_flop/configs/baseline.yaml
+  lstm_ckpt: results/flip_flop/lstm/model_final.pt
+  lstm_cfg: flip_flop/configs/lstm.yaml
+  use_lstm: true
+
+distribution:
+  dist_name: stationary            # or "bit_markov" / "write_flip" (add keys in param_grid)
+  T: 512
+
+search:
+  param_grid:
+    p_w: [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.45]
+    p_r: [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.45]
+    bit_p1: [0.1, 0.3, 0.5, 0.7, 0.9]
+  search_n: 3000
+  final_eval_n: 100000
+  eval_batch_size: 64
+  n_final_seeds: 3
+
+objective:
+  lambda_lstm: 10.0
+  lstm_tolerance: 0.001
+
+output:
+  out_dir: results/flip_flop/adversary/stationary
+  top_k: 25
+  seed: 0
+  device: auto

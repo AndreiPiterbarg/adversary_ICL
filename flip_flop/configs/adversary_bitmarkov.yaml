@@ -1,0 +1,30 @@
+# Adversary axis A1 — CMA-ES over BitMarkov:
+# 5-dim search: 3 simplex logits → (p_w, p_r, p_i), 1 sigmoid logit → bit_p1,
+# 1 sigmoid logit → bit_stay (P(b_t == b_{t-1})). iid recovers at bit_stay=0.5.
+
+distribution:
+  name: bit_markov
+  T: 512
+
+frozen_models:
+  transformer_ckpt: results/flip_flop/baseline/model_final.pt
+  transformer_cfg: results/flip_flop/baseline/config.yaml
+  lstm_ckpt: results/flip_flop/lstm/model_final.pt
+  lstm_cfg: results/flip_flop/lstm/config.yaml
+
+search:
+  type: cma
+  budget: 3000
+  pop_size: 16
+  num_restarts: 3
+  sigma_init: 0.3
+  n: 2000
+  batch_size: 64
+
+objective:
+  lambda_lstm: 10.0
+  lstm_tolerance: 0.001
+
+output:
+  out_dir: results/flip_flop/adversary/bitmarkov
+  seed: 0

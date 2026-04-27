@@ -1,0 +1,65 @@
+# Cumulative retrain — one round.
+# Continues from a prior checkpoint (baseline for round 1, previous round
+# for subsequent rounds). Trains on a 50/50 mixture of base FFL(0.8) and
+# adversary-found families. No rollback, no safety gate — we read post-hoc.
+#
+# NOTE: family extraction is currently stubbed (see flip_flop/adversary/family.py).
+# The stub replays specific adversary configs as "families of one." Replace the
+# stub with template-based extraction before running real experiments.
+
+retrain:
+  base_p_i: 0.8
+  # Replay bumped 0.5 → 0.7 (Step 7). Per-family share at K=5 = (1-0.7)/5 = 6%,
+  # above the AdvProp ~5% floor. Trades some adversarial signal for stronger
+  # FFL anchor — the regression on FFL(0.98) at R2 (6.5% → 10.85%) was the
+  # symptom this targets.
+  replay_frac: 0.7
+  # Checkpoint to initialise from. Round 1 -> baseline; round K -> round (K-1).
+  init_from_ckpt: results/flip_flop/baseline/model_final.pt
+  # Adversary logs to extract families from (cumulative: list all prior rounds).
+  family_sources:
+    - log: results/flip_flop/adversary/piecewise/adversary_log.jsonl
+      top_k: 5
+
+model:
+  family: gpt2
+  vocab_size: 5
+  n_positions: 512
+  n_embd: 512
+  n_layer: 6
+  n_head: 8
+  resid_pdrop: 0.0
+  embd_pdrop: 0.0
+  attn_pdrop: 0.0
+
+data:
+  seq_len: 512
+  train_p_i: 0.8                # base (sampler override wins)
+  eval_in_p_i: 0.8
+  eval_sparse_p_i: 0.98
+  eval_dense_p_i: 0.1
+  eval_in_n: 1000
+  eval_sparse_n: 10000
+  eval_dense_n: 3000
+  eval_seed: 1
+
+training:
+  lr: 3.0e-5                    # 10x below baseline
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.999
+  warmup_steps: 100
+  train_steps: 2000
+  decay_end_step: 2001
+  batch_size: 16
+  grad_clip: 1.0
+  seed: 0
+  eval_every: 500
+  training_eval_subset: 1000
+  log_every: 50
+  save_every: 1000
+  eval_batch_size: 64
+  device: auto
+
+output:
+  out_dir: results/flip_flop/retrain/round_1

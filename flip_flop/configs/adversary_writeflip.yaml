@@ -1,0 +1,31 @@
+# Adversary axis A2 — CMA-ES over WriteFlipRate:
+# 5-dim search: 3 simplex logits → (p_w, p_r, p_i), 1 sigmoid logit → bit_p1,
+# 1 sigmoid logit → flip_rate (P(new_write_bit != stored_bit)). iid recovers
+# at flip_rate=0.5; 0.0 = always-repeat; 1.0 = always-flip.
+
+distribution:
+  name: write_flip
+  T: 512
+
+frozen_models:
+  transformer_ckpt: results/flip_flop/baseline/model_final.pt
+  transformer_cfg: results/flip_flop/baseline/config.yaml
+  lstm_ckpt: results/flip_flop/lstm/model_final.pt
+  lstm_cfg: results/flip_flop/lstm/config.yaml
+
+search:
+  type: cma
+  budget: 3000
+  pop_size: 16
+  num_restarts: 3
+  sigma_init: 0.3
+  n: 2000
+  batch_size: 64
+
+objective:
+  lambda_lstm: 10.0
+  lstm_tolerance: 0.001
+
+output:
+  out_dir: results/flip_flop/adversary/writeflip
+  seed: 0

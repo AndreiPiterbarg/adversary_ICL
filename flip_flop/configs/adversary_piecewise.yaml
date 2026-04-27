@@ -1,0 +1,45 @@
+# Adversary config: axis C — CMA-ES search over non-stationary piecewise FFL.
+# Each of K_segments segments has independent (p_w, p_r, bit_p1), with starts
+# fixed uniformly in [0, 1). Encoder decodes a 4K-dim real vector through
+# softmax (simplex) + sigmoid (bit bias) so every CMA iterate is a valid dist.
+
+strategy:
+  type: cma
+
+frozen_models:
+  transformer_ckpt: results/flip_flop/baseline/model_final.pt
+  transformer_cfg: flip_flop/configs/baseline.yaml
+  lstm_ckpt: results/flip_flop/lstm/model_final.pt
+  lstm_cfg: flip_flop/configs/lstm.yaml
+  use_lstm: true
+
+distribution:
+  dist_name: piecewise
+  T: 512
+
+cma:
+  K_segments: 4
+  # Budget cut from 3000 → 1500 based on R1 cma_trajectory.jsonl: peak fitness
+  # 0.106 was reached at eval 928 (31% of 3000); restarts 1+2 added zero
+  # improvement across 2016 wasted evals. R2 trajectory: peak 1.000 at eval
+  # 1840 (61% of 3000). 1500 leaves headroom for the slower R2-style case.
+  budget: 1500
+  pop_size: 16
+  sigma_init: 0.3
+  num_restarts: 3
+
+search:
+  search_n: 2000
+  final_eval_n: 100000
+  eval_batch_size: 64
+  n_final_seeds: 3
+
+objective:
+  lambda_lstm: 10.0
+  lstm_tolerance: 0.001
+
+output:
+  out_dir: results/flip_flop/adversary/piecewise
+  top_k: 25
+  seed: 0
+  device: auto

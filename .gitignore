@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+
+# PyTorch / checkpoints
+*.pt
+*.pth
+*.ckpt
+*.pkl
+checkpoints/
+
+# Env / IDE / OS
+.env
+*.swp
+*.swo
+.DS_Store
+desktop.ini
+Thumbs.db
+.idea/
+.vscode/
+
+# Notebooks / experiments
+.ipynb_checkpoints/
+wandb/
+*.log
+
+# Experiment output dirs (kept locally, not on GitHub)
+results/
+results_full_loop/
+results_tier1_v2/
+results_phase_b/
+results_tier1/
+results_tier2/
+results_h100/
+results_h100_final/
+
+# Local-only notes / drafts (excluded by request)
+flip_flop_summary.md
+Look at weights to see if similar to the.md
+
+# Claude harness
+.claude/scheduled_tasks.lock

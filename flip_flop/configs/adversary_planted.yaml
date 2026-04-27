@@ -1,0 +1,51 @@
+# Adversary config: axis D — grid search over planted-pattern templates.
+# Switch `template` among {gap, decoy, distractor, disagree} and set the
+# template-specific grid in `param_grid`.
+
+strategy:
+  type: planted
+
+frozen_models:
+  transformer_ckpt: results/flip_flop/baseline/model_final.pt
+  transformer_cfg: flip_flop/configs/baseline.yaml
+  lstm_ckpt: results/flip_flop/lstm/model_final.pt
+  lstm_cfg: flip_flop/configs/lstm.yaml
+  use_lstm: true
+
+distribution:
+  dist_name: planted
+  T: 512
+  template: decoy           # gap | decoy | distractor | disagree
+  filler_p_i: 1.0
+
+# Template-specific grids. Only uncomment the block matching `template`.
+search:
+  param_grid:
+    # --- decoy (D2): early W vs late true W with opposite bits ---
+    k_early: [1, 5, 11, 23, 47]
+    k_true: [128, 192, 224, 244, 250, 254]      # instruction-index; n_inst=256, read at 255
+    b_decoy: [0, 1]
+    # --- gap (D1): single W at k_write; sweep 1D ---
+    # k_write: [1, 5, 11, 23, 47, 95, 191, 250]
+    # --- distractor (D3): late distractor near the read ---
+    # k_true: [1, 11, 47, 128]
+    # d: [1, 2, 3, 5, 11, 23]
+    # b_true: [0, 1]
+    # --- disagree (D4): multi-write agreement ratio ---
+    # N_w: [2, 3, 5, 8, 13]
+    # frac_agree: [0.0, 0.25, 0.5, 0.75, 1.0]
+    # b_last: [0, 1]
+  search_n: 2000
+  final_eval_n: 100000
+  eval_batch_size: 64
+  n_final_seeds: 3
+
+objective:
+  lambda_lstm: 10.0
+  lstm_tolerance: 0.001
+
+output:
+  out_dir: results/flip_flop/adversary/planted_decoy
+  top_k: 25
+  seed: 0
+  device: auto
