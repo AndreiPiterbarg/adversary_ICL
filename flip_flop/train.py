@@ -105,7 +105,7 @@ class TrainConfig:
 
     @classmethod
     def from_yaml(cls, path):
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             raw = yaml.safe_load(f)
         flat = {}
         for section in raw.values():

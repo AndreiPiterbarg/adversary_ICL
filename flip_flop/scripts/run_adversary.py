@@ -23,6 +23,12 @@ def main():
     parser.add_argument("--config", default=DEFAULT_CONFIG)
     parser.add_argument("--out_dir", default=None)
     parser.add_argument("--seed", type=int, default=None)
+    # Per-round overrides used by run_beat_liu_loop.py (point the adversary at
+    # M_{k-1} and, optionally, the second-seed checkpoint for the §2.D filter).
+    parser.add_argument("--transformer_ckpt", default=None)
+    parser.add_argument("--transformer_cfg", default=None)
+    parser.add_argument("--transformer2_ckpt", default=None)
+    parser.add_argument("--transformer2_cfg", default=None)
     parser.add_argument("--test_run", action="store_true")
     args = parser.parse_args()
 
@@ -31,6 +37,14 @@ def main():
         cfg.out_dir = args.out_dir
     if args.seed is not None:
         cfg.seed = args.seed
+    if args.transformer_ckpt is not None:
+        cfg.transformer_ckpt = args.transformer_ckpt
+    if args.transformer_cfg is not None:
+        cfg.transformer_cfg = args.transformer_cfg
+    if args.transformer2_ckpt is not None:
+        cfg.transformer2_ckpt = args.transformer2_ckpt
+    if args.transformer2_cfg is not None:
+        cfg.transformer2_cfg = args.transformer2_cfg
     if args.test_run:
         # Shrink everything to smoke-test size.
         cfg.search_n = 128

@@ -17,7 +17,7 @@ from .search import EvalResult
 
 
 def _load_cfg(cfg_path: str) -> SimpleNamespace:
-    with open(cfg_path) as f:
+    with open(cfg_path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     flat = {}
     for k, v in raw.items():
@@ -71,6 +71,10 @@ def dump_final_eval(
     lstm_tolerance: float = 1e-3,
     objective_mode: str = "penalty",
     min_reads_per_seq: float = 0.0,
+    min_gap: float = 0.0,
+    regret_hinge_coef: float = 5.0,
+    regret_hinge_tol: float = 1e-3,
+    transformer2=None,
 ):
     """Re-evaluate top-K at larger N with seed averaging, write final_eval.jsonl."""
     os.makedirs(out_dir, exist_ok=True)
@@ -83,6 +87,8 @@ def dump_final_eval(
                 n=n, batch_size=batch_size, device=device, n_seeds=n_seeds,
                 lambda_lstm=lambda_lstm, lstm_tolerance=lstm_tolerance,
                 objective_mode=objective_mode, min_reads_per_seq=min_reads_per_seq,
+                min_gap=min_gap, regret_hinge_coef=regret_hinge_coef,
+                regret_hinge_tol=regret_hinge_tol, transformer2=transformer2,
             )
             print(f"  [final_eval {i + 1}/{len(top)}] "
                   f"fit={fr.fitness:.4f} T_glitch={fr.T_glitch:.4f} "
@@ -93,8 +99,11 @@ def dump_final_eval(
                 "search_fitness": r.fitness,
                 "final_fitness": fr.fitness,
                 "final_T_glitch": fr.T_glitch,
+                "final_T_glitch2": fr.T_glitch2,
                 "final_lstm_glitch": fr.lstm_glitch,
                 "read_density": fr.read_density,
+                "gap": fr.gap,
+                "gap_p90": fr.gap_p90,
                 "n_samples": fr.n_samples,
             }
             f.write(json.dumps(out) + "\n")

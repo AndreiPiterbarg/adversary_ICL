@@ -13,7 +13,8 @@ import yaml
 from . import distribution as dist_mod
 from .io import dump_final_eval, load_frozen_model, save_top_k
 from .objective import fitness
-from .search import (EvalResult, PiecewiseEncoder, cma_search, grid_search,
+from .search import (AntiCorrelatedBitsEncoder, EvalResult, PiecewiseEncoder,
+                     StationaryMixtureEncoder, cma_search, grid_search,
                      save_checkpoint)
 
 
@@ -27,6 +28,11 @@ class AdversaryConfig:
     lstm_ckpt: str = "results/flip_flop/lstm/model_final.pt"
     lstm_cfg: str = "flip_flop/configs/lstm.yaml"
     use_lstm: bool = True
+    # optional second-seed transformer (PLAN §2.D two-checkpoint robustness
+    # filter): when set, regret is computed against both and the score is the
+    # min — kills non-transferable single-checkpoint exploits.
+    transformer2_ckpt: str = ""
+    transformer2_cfg: str = ""
     # distribution
     dist_name: str = "stationary"
     T: int = 512
@@ -49,6 +55,9 @@ class AdversaryConfig:
     lstm_tolerance: float = 1e-3
     objective_mode: str = "penalty"     # "penalty" (legacy) | "regret"
     min_reads_per_seq: float = 0.0      # hard feasibility floor; 0 = inactive
+    min_gap: float = 0.0                # hard write→read-gap floor; 0 = inactive
+    regret_hinge_coef: float = 5.0      # soft LSTM validity hinge (regret mode)
+    regret_hinge_tol: float = 1e-3      # hinge tolerance on LSTM glitch
     # output
     out_dir: str = "results/flip_flop/adversary/run"
     top_k: int = 25
@@ -57,7 +66,7 @@ class AdversaryConfig:
 
     @classmethod
     def from_yaml(cls, path: str) -> "AdversaryConfig":
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             raw = yaml.safe_load(f)
         flat: dict[str, Any] = {}
         for v in raw.values():
@@ -101,6 +110,22 @@ def _generic_factory(cfg: AdversaryConfig):
     return factory
 
 
+def _make_encoder(cfg: AdversaryConfig):
+    """Pick the CMA encoder for cfg.dist_name. Every encoder satisfies the
+    `Encoder` protocol so cma_search treats them uniformly."""
+    name = cfg.dist_name
+    if name == "piecewise":
+        return PiecewiseEncoder(T=cfg.T, K=cfg.K_segments)
+    if name == "mixture_two_stationary":
+        return StationaryMixtureEncoder(T=cfg.T)
+    if name == "anti_correlated_bits":
+        return AntiCorrelatedBitsEncoder(T=cfg.T)
+    raise ValueError(
+        f"no CMA encoder for dist_name={name!r}; "
+        f"known: piecewise, mixture_two_stationary, anti_correlated_bits"
+    )
+
+
 def run_adversary(cfg: AdversaryConfig):
     device = _resolve_device(cfg.device)
     os.makedirs(cfg.out_dir, exist_ok=True)
@@ -109,6 +134,10 @@ def run_adversary(cfg: AdversaryConfig):
 
     transformer = load_frozen_model(cfg.transformer_ckpt, cfg.transformer_cfg, device)
     lstm = load_frozen_model(cfg.lstm_ckpt, cfg.lstm_cfg, device) if cfg.use_lstm else None
+    transformer2 = None
+    if cfg.transformer2_ckpt and cfg.transformer2_cfg:
+        transformer2 = load_frozen_model(cfg.transformer2_ckpt, cfg.transformer2_cfg, device)
+        print(f"[run] two-checkpoint filter ON (second seed: {cfg.transformer2_ckpt})")
 
     rng = np.random.default_rng(cfg.seed)
     objective = partial(
@@ -117,6 +146,8 @@ def run_adversary(cfg: AdversaryConfig):
         n=cfg.search_n, batch_size=cfg.eval_batch_size, device=device,
         rng=rng, lambda_lstm=cfg.lambda_lstm, lstm_tolerance=cfg.lstm_tolerance,
         objective_mode=cfg.objective_mode, min_reads_per_seq=cfg.min_reads_per_seq,
+        min_gap=cfg.min_gap, regret_hinge_coef=cfg.regret_hinge_coef,
+        regret_hinge_tol=cfg.regret_hinge_tol, transformer2=transformer2,
     )
 
     if cfg.strategy == "grid":
@@ -124,7 +155,7 @@ def run_adversary(cfg: AdversaryConfig):
     elif cfg.strategy == "planted":
         results = grid_search(_planted_factory(cfg), cfg.param_grid, objective, cfg.out_dir)
     elif cfg.strategy == "cma":
-        encoder = PiecewiseEncoder(T=cfg.T, K=cfg.K_segments)
+        encoder = _make_encoder(cfg)
         results = cma_search(
             encoder, objective, cfg.out_dir,
             budget=cfg.budget, pop_size=cfg.pop_size, sigma_init=cfg.sigma_init,
@@ -141,6 +172,8 @@ def run_adversary(cfg: AdversaryConfig):
         n_seeds=cfg.n_final_seeds, out_dir=cfg.out_dir,
         lambda_lstm=cfg.lambda_lstm, lstm_tolerance=cfg.lstm_tolerance,
         objective_mode=cfg.objective_mode, min_reads_per_seq=cfg.min_reads_per_seq,
+        min_gap=cfg.min_gap, regret_hinge_coef=cfg.regret_hinge_coef,
+        regret_hinge_tol=cfg.regret_hinge_tol, transformer2=transformer2,
     )
     return {"n_candidates": len(results),
             "best_search_fitness": max((r.fitness for r in results if r.is_valid),
