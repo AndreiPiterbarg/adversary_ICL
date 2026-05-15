@@ -61,3 +61,32 @@ class MixedSampler:
             "replay_frac": self.replay_frac,
             "families": [f.to_dict() for f in self.families],
         }
+
+
+class FixedDatasetSampler:
+    """Sampler backed by a saved (N, T) LongTensor of pre-materialized
+    sequences. Replays uniformly with replacement, so a training run that
+    asks for `train_steps * batch_size` total sequences will see each
+    saved sequence ~equally often when N >= train_steps * batch_size, and
+    will epoch over a smaller set otherwise.
+
+    Pluggable into train.py via `train(cfg, sampler=FixedDatasetSampler(...))`.
+    Used by run_retrain_from_dataset.py to retrain a fresh model on the
+    dataset that a prior training run dumped.
+    """
+
+    def __init__(self, tokens: torch.LongTensor, source: str = ""):
+        assert tokens.ndim == 2, f"expected (N, T), got {tuple(tokens.shape)}"
+        assert tokens.dtype == torch.long, f"expected int64, got {tokens.dtype}"
+        self.tokens = tokens
+        self.T = int(tokens.shape[1])
+        self.N = int(tokens.shape[0])
+        self.source = source
+
+    def __call__(self, batch_size: int, rng: np.random.Generator) -> torch.LongTensor:
+        idx = rng.integers(0, self.N, size=batch_size)
+        return self.tokens[idx]
+
+    def describe(self) -> dict:
+        return {"kind": "FixedDatasetSampler", "T": self.T, "N": self.N,
+                "source": self.source}

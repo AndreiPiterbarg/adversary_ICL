@@ -15,7 +15,7 @@ Multi-round orchestration is manual: pull results, extract new adversary,
 edit the yaml's init_from_ckpt + family_sources, re-run.
 
 Usage:
-    python -m flip_flop.scripts.run_retrain --config flip_flop/configs/retrain.yaml
+    python -m flip_flop.scripts.run_retrain --config <path-to-yaml>
     python -m flip_flop.scripts.run_retrain --config ... --test_run
 """
 import argparse
@@ -26,20 +26,13 @@ import numpy as np
 import torch
 import yaml
 
-from flip_flop.adversary.family import (Family, _select_with_axis_floor,
+from flip_flop.adversary.family import (Family,
                                          extract_families_from_adversary_log)
 from flip_flop.adversary.io import load_frozen_model
 from flip_flop.adversary.mixture_sampler import MixedSampler
 from flip_flop.data import make_eval_dataset
 from flip_flop.eval import evaluate_dataset
 from flip_flop.train import TrainConfig, train
-
-DEFAULT_CONFIG = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "configs",
-    "retrain.yaml",
-)
-
 
 def _load_families(
     family_sources: list[dict],
@@ -49,13 +42,9 @@ def _load_families(
     device: str,
     global_top_k: int = 5,
 ) -> list[Family]:
-    """Extract families from each source, then apply per-axis floor + global
-    rank ACROSS sources (not per-source). This is what the Phase C plan calls
-    for: axis representation is enforced at the final mixture, not per log.
-
-    Each source's `top_k` is treated as a *source cap* (max candidates from
-    that source pre-aggregation). After all sources, `_select_with_axis_floor`
-    picks `global_top_k` total with the per-axis floor.
+    """Extract families from each source, pool across sources, take top-K
+    by glitch rate. Each source's `top_k` is a per-source cap (default 10);
+    `global_top_k` truncates the pooled list.
     """
     pooled: list[Family] = []
     for src in family_sources:
@@ -65,11 +54,11 @@ def _load_families(
             transformer=transformer,
             lstm=lstm,
             device=device,
-            top_k=int(src.get("top_k", 10)),  # source cap (pre-aggregation)
+            top_k=int(src.get("top_k", 10)),
         ))
     assert pooled, "family_sources produced zero families"
-    # Global axis-floor + rank across all sources combined.
-    return _select_with_axis_floor(pooled, top_k=global_top_k)
+    pooled.sort(key=lambda f: getattr(f, "cluster_mean_glitch", 0.0), reverse=True)
+    return pooled[:global_top_k]
 
 
 def _eval_battery(
@@ -112,7 +101,7 @@ def _eval_battery(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default=DEFAULT_CONFIG)
+    parser.add_argument("--config", required=True)
     parser.add_argument("--out_dir", default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--test_run", action="store_true")

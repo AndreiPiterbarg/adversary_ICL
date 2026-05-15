@@ -20,9 +20,11 @@ def _load_cfg(cfg_path: str) -> SimpleNamespace:
     with open(cfg_path) as f:
         raw = yaml.safe_load(f)
     flat = {}
-    for v in raw.values():
+    for k, v in raw.items():
         if isinstance(v, dict):
             flat.update(v)
+        else:
+            flat[k] = v
     return SimpleNamespace(**flat)
 
 
@@ -67,6 +69,8 @@ def dump_final_eval(
     out_dir: str,
     lambda_lstm: float = 10.0,
     lstm_tolerance: float = 1e-3,
+    objective_mode: str = "penalty",
+    min_reads_per_seq: float = 0.0,
 ):
     """Re-evaluate top-K at larger N with seed averaging, write final_eval.jsonl."""
     os.makedirs(out_dir, exist_ok=True)
@@ -78,6 +82,7 @@ def dump_final_eval(
                 dist, transformer, lstm,
                 n=n, batch_size=batch_size, device=device, n_seeds=n_seeds,
                 lambda_lstm=lambda_lstm, lstm_tolerance=lstm_tolerance,
+                objective_mode=objective_mode, min_reads_per_seq=min_reads_per_seq,
             )
             print(f"  [final_eval {i + 1}/{len(top)}] "
                   f"fit={fr.fitness:.4f} T_glitch={fr.T_glitch:.4f} "
@@ -89,6 +94,7 @@ def dump_final_eval(
                 "final_fitness": fr.fitness,
                 "final_T_glitch": fr.T_glitch,
                 "final_lstm_glitch": fr.lstm_glitch,
+                "read_density": fr.read_density,
                 "n_samples": fr.n_samples,
             }
             f.write(json.dumps(out) + "\n")

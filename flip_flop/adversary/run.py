@@ -47,6 +47,8 @@ class AdversaryConfig:
     n_final_seeds: int = 3
     lambda_lstm: float = 10.0
     lstm_tolerance: float = 1e-3
+    objective_mode: str = "penalty"     # "penalty" (legacy) | "regret"
+    min_reads_per_seq: float = 0.0      # hard feasibility floor; 0 = inactive
     # output
     out_dir: str = "results/flip_flop/adversary/run"
     top_k: int = 25
@@ -114,6 +116,7 @@ def run_adversary(cfg: AdversaryConfig):
         transformer=transformer, lstm=lstm,
         n=cfg.search_n, batch_size=cfg.eval_batch_size, device=device,
         rng=rng, lambda_lstm=cfg.lambda_lstm, lstm_tolerance=cfg.lstm_tolerance,
+        objective_mode=cfg.objective_mode, min_reads_per_seq=cfg.min_reads_per_seq,
     )
 
     if cfg.strategy == "grid":
@@ -137,6 +140,7 @@ def run_adversary(cfg: AdversaryConfig):
         n=cfg.final_eval_n, batch_size=cfg.eval_batch_size, device=device,
         n_seeds=cfg.n_final_seeds, out_dir=cfg.out_dir,
         lambda_lstm=cfg.lambda_lstm, lstm_tolerance=cfg.lstm_tolerance,
+        objective_mode=cfg.objective_mode, min_reads_per_seq=cfg.min_reads_per_seq,
     )
     return {"n_candidates": len(results),
             "best_search_fitness": max((r.fitness for r in results if r.is_valid),

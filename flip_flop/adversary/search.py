@@ -26,6 +26,7 @@ class EvalResult:
     fitness: float
     T_glitch: float
     lstm_glitch: float
+    read_density: float
     n_samples: int
     seed: int
     step: int = 0
@@ -41,6 +42,7 @@ class EvalResult:
             fitness=fr.fitness,
             T_glitch=fr.T_glitch,
             lstm_glitch=fr.lstm_glitch,
+            read_density=fr.read_density,
             n_samples=fr.n_samples,
             seed=fr.seed,
             step=step,
