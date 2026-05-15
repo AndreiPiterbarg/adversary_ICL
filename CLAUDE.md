@@ -73,17 +73,14 @@ Consistent with the paper's R4 finding ("training on rare sequences works by a w
 - New adversary code goes in `flip_flop/adversary/`; new experiment configs in `flip_flop/configs/`.
 - When adding to `flip_flop/`, keep it minimal — small, paper-faithful modules beat heavy abstraction.
 
-## Sweep retrain — union of all training data
+## Attention-position diagnostic
 
-To train one model on the union of every family any prior retrain saw,
-use `flip_flop/scripts/run_retrain_sweep.py` with `retrain_sweep.yaml`. It
-reads each existing `sampler.json` (the ground-truth record of what each
-prior retrain trained on), reconstructs the families verbatim via
-`family_from_dict` in `flip_flop/adversary/family.py`, and trains on the
-union with one shared `replay_frac`. No re-clustering or re-bisection — the
-sweep dataset is exactly the families those retrains saw. The merged
-`sampler.json` records each family's source path for provenance.
+`flip_flop/scripts/diagnose_attention_position.py` measures, per (layer, head), how much attention each read places on the ideal target (`t*+1`), the early window `[0, 8)`, and the most-recent read — split CORRECT vs WRONG and by piecewise segment. Run on every newly trained checkpoint to track whether the paper's drift signature (Prop 4 / Fig 16d, concentrated in segment 3 of `piecewise_c00`) is shrinking:
 
-## Open TODOs
+```
+python -m flip_flop.scripts.diagnose_attention_position \
+  --ckpt results/flip_flop/<run>/model_final.pt --family piecewise_c00
+```
 
-- **Family jitter** (`flip_flop/adversary/family.py::ClusterFamily`): the current v1 family is a single α-pulled-back distribution — every sample from the family has identical parameters. Introducing per-sequence jitter (draw params from `N(p_α*, σ²)` where σ is tied to the cluster's observed std) would expose the model to a neighborhood rather than a point. Decide between three options: (a) jitter proportional to `(1 - α)`, (b) jitter proportional to cluster std, (c) no jitter (current). See the family-design discussion thread for context.
+Look at `summary.md` in `<ckpt_dir>/attention_position/piecewise_c00/`: lower `mass_early` and higher `mass_correct` on WRONG-segment-3 reads = improvement.
+
