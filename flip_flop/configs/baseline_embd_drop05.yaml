@@ -1,0 +1,53 @@
+# Baseline + embedding dropout 0.5.
+# Liu et al. 2023 R6 (Figure 10): emb_drop ≈ 0.5 reduces FFL(0.98) sparse-tail
+# glitch rate by ~2 orders of magnitude vs baseline. The only standard
+# regularizer Liu identified as having a large effect.
+#
+# Purpose in THIS project: re-run the adversary CMA-ES loop on the resulting
+# checkpoint. Question: do piecewise_c00 / bit_markov_c00 still surface, or
+# does this regularizer close them? See REGULARIZATION_PLAN.md, experiment 1.
+#
+# Diff from baseline.yaml: embd_pdrop 0.0 -> 0.5, out_dir.
+
+model:
+  family: gpt2
+  vocab_size: 5
+  n_positions: 512
+  n_embd: 512
+  n_layer: 6
+  n_head: 8
+  resid_pdrop: 0.0
+  embd_pdrop: 0.5
+  attn_pdrop: 0.0
+
+data:
+  seq_len: 512
+  train_p_i: 0.8
+  eval_in_p_i: 0.8
+  eval_sparse_p_i: 0.98
+  eval_dense_p_i: 0.1
+  eval_in_n: 1000
+  eval_sparse_n: 100000
+  eval_dense_n: 3000
+  eval_seed: 1
+
+training:
+  lr: 3.0e-4
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.999
+  warmup_steps: 50
+  train_steps: 10000
+  decay_end_step: 10001
+  batch_size: 16
+  grad_clip: 1.0
+  seed: 0
+  eval_every: 500
+  training_eval_subset: 1000
+  log_every: 50
+  save_every: 2000
+  eval_batch_size: 64
+  device: auto
+
+output:
+  out_dir: results/flip_flop/baseline_embd_drop05

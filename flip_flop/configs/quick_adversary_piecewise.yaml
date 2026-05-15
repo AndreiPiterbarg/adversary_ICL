@@ -1,0 +1,44 @@
+# Quick variant of adversary_piecewise.yaml for fast local experimentation.
+# Same encoder, same fitness, same pull-back logic — just smaller CMA budget,
+# fewer search samples, and lower-dimensional segment grid. Findings translate
+# directionally to the full config; use adversary_piecewise.yaml for the real
+# (publishable) run.
+
+strategy:
+  type: cma
+
+frozen_models:
+  transformer_ckpt: results/flip_flop/baseline/model_final.pt
+  transformer_cfg: flip_flop/configs/baseline.yaml
+  lstm_ckpt: results/flip_flop/lstm/model_final.pt
+  lstm_cfg: flip_flop/configs/lstm.yaml
+  use_lstm: true
+
+distribution:
+  dist_name: piecewise
+  T: 512
+
+cma:
+  K_segments: 2          # was 4 — halves search dimensionality
+  budget: 200            # was 1500
+  pop_size: 8            # was 16
+  sigma_init: 0.3
+  num_restarts: 1        # was 3 — single CMA run with full budget
+
+search:
+  search_n: 500          # was 2000 — fewer samples per fitness eval
+  final_eval_n: 5000     # was 100000
+  eval_batch_size: 64
+  n_final_seeds: 1       # was 3
+
+objective:
+  lambda_lstm: 10.0
+  lstm_tolerance: 0.001
+  objective_mode: regret      # excess error over LSTM skyline (was penalty)
+  min_reads_per_seq: 3.0      # hard floor; kills the p_r->0 degenerate exploit
+
+output:
+  out_dir: results/flip_flop/adversary/quick_piecewise_regret
+  top_k: 10              # was 25
+  seed: 0
+  device: auto

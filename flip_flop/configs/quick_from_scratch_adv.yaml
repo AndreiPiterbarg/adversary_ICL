@@ -1,0 +1,60 @@
+# Quick from-scratch retrain on a dataset.pt produced from pooled adversarial
+# breaking points. Architecture & optimizer match baseline.yaml (Liu Appendix
+# B.2); the train budget is shrunk for fast local runs.
+#
+# To run (after dump_dataset.py has produced the dataset):
+#   python -m flip_flop.scripts.run_retrain_from_dataset \
+#       --config flip_flop/configs/quick_from_scratch_adv.yaml \
+#       --dataset results/flip_flop/breaking_points/quick/dataset.pt
+#
+# Scaling up: copy this file as from_scratch_adv.yaml and restore train_steps
+# (10000), decay_end_step (10001), warmup_steps (50), and eval_*_n to the
+# values in baseline.yaml. Architecture and optimizer should NOT be changed
+# (those define the comparison to the paper).
+
+retrain_from_dataset:
+  init_from_ckpt: ""    # empty = train from scratch
+
+model:
+  family: gpt2
+  vocab_size: 5
+  n_positions: 512
+  n_embd: 512
+  n_layer: 6
+  n_head: 8
+  resid_pdrop: 0.0
+  embd_pdrop: 0.0
+  attn_pdrop: 0.0
+
+data:
+  seq_len: 512
+  train_p_i: 0.8
+  eval_in_p_i: 0.8
+  eval_sparse_p_i: 0.98
+  eval_dense_p_i: 0.1
+  eval_in_n: 200          # was 1000
+  eval_sparse_n: 10000    # was 100000
+  eval_dense_n: 600       # was 3000
+  eval_seed: 1
+
+training:
+  lr: 3.0e-4
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.999
+  warmup_steps: 20        # was 50
+  train_steps: 2000       # was 10000
+  decay_end_step: 2001    # was 10001
+  batch_size: 16
+  grad_clip: 1.0
+  seed: 0
+  eval_every: 500
+  training_eval_subset: 200
+  log_every: 50
+  save_every: 0
+  eval_batch_size: 64
+  device: auto
+  selection_enabled: false   # FixedDatasetSampler has no .families; disable defensively
+
+output:
+  out_dir: results/flip_flop/quick_from_scratch_adv

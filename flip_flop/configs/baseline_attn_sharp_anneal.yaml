@@ -1,0 +1,77 @@
+# STUB CONFIG — DO NOT RUN AS-IS.
+# Requires train.py change: this config is non-functional under the current
+# train.py because train.py:272-275 computes only the plain clean_loss and has
+# no hook for an auxiliary loss term. The fields below in `regularization:`
+# are NOT read by anything yet.
+#
+# Purpose: Liu et al. 2023 R8 + Proposition 4 + Figure 16d show that
+# attention-sharpening regularization induces a NEW failure mode -- the model
+# confidently attends to an EARLY (wrong) write instead of the most-recent
+# one. This is exactly the kind of structured, mechanistically-attributable
+# glitch the adversary is meant to discover. Highest-priority experiment
+# once train.py supports an auxiliary loss.
+#
+# To make this runnable, train.py would need:
+#   1. Read regularization.* fields below into TrainConfig.
+#   2. Capture per-layer attention weights from the GPT2 forward pass (set
+#      output_attentions=True or hook the attention modules).
+#   3. Compute the chosen sharpening surrogate (entropy / negL2 / negLinf)
+#      averaged over heads/layers/positions.
+#   4. Add coefficient * sharpening_surrogate to the loss before backward.
+#   5. Anneal the coefficient on the chosen schedule (linear / oscillating)
+#      starting at the chosen step.
+# None of (1)-(5) exist yet. This config is a placeholder so the
+# regularization stack is ready when train.py is edited.
+
+model:
+  family: gpt2
+  vocab_size: 5
+  n_positions: 512
+  n_embd: 512
+  n_layer: 6
+  n_head: 8
+  resid_pdrop: 0.0
+  embd_pdrop: 0.0
+  attn_pdrop: 0.0
+
+data:
+  seq_len: 512
+  train_p_i: 0.8
+  eval_in_p_i: 0.8
+  eval_sparse_p_i: 0.98
+  eval_dense_p_i: 0.1
+  eval_in_n: 1000
+  eval_sparse_n: 100000
+  eval_dense_n: 3000
+  eval_seed: 1
+
+training:
+  lr: 3.0e-4
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.999
+  warmup_steps: 50
+  train_steps: 10000
+  decay_end_step: 10001
+  batch_size: 16
+  grad_clip: 1.0
+  seed: 0
+  eval_every: 500
+  training_eval_subset: 1000
+  log_every: 50
+  save_every: 2000
+  eval_batch_size: 64
+  device: auto
+
+# NOT READ BY train.py YET. See header. Values mirror Liu Appendix B.4.
+regularization:
+  attn_sharpening:
+    surrogate: entropy        # one of: entropy, neg_l2, neg_linf
+    coefficient: 0.1          # Liu sweep: {0.01, 0.03, ..., 0.1, 0.3, 1, 10, 30}
+    anneal:
+      schedule: linear        # one of: linear, oscillating
+      start_step: 2000        # Liu sweep: {0, 2000, 5000}
+      end_step: 10000
+
+output:
+  out_dir: results/flip_flop/baseline_attn_sharp_anneal

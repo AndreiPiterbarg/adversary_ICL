@@ -1,0 +1,40 @@
+# Quick variant of adversary_planted.yaml for fast local experimentation.
+# Decoy template only, trimmed grid. Use adversary_planted.yaml for the real run.
+
+strategy:
+  type: planted
+
+frozen_models:
+  transformer_ckpt: results/flip_flop/baseline/model_final.pt
+  transformer_cfg: flip_flop/configs/baseline.yaml
+  lstm_ckpt: results/flip_flop/lstm/model_final.pt
+  lstm_cfg: flip_flop/configs/lstm.yaml
+  use_lstm: true
+
+distribution:
+  dist_name: planted
+  T: 512
+  template: decoy
+  filler_p_i: 1.0
+
+search:
+  param_grid:
+    k_early: [1, 11, 47]            # was [1, 5, 11, 23, 47]
+    k_true: [128, 224, 254]         # was [128, 192, 224, 244, 250, 254]
+    b_decoy: [0, 1]
+  search_n: 500                     # was 2000
+  final_eval_n: 5000                # was 100000
+  eval_batch_size: 64
+  n_final_seeds: 1                  # was 3
+
+objective:
+  lambda_lstm: 10.0
+  lstm_tolerance: 0.001
+  objective_mode: regret      # excess error over LSTM skyline (was penalty)
+  min_reads_per_seq: 3.0      # hard floor; kills the p_r->0 degenerate exploit
+
+output:
+  out_dir: results/flip_flop/adversary/quick_planted_decoy_regret
+  top_k: 10                         # was 25
+  seed: 0
+  device: auto
