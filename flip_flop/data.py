@@ -72,6 +72,30 @@ def sample_ffl(T, p_i, batch_size, rng):
     return interleave(inst, data)
 
 
+def write_read_gaps(tokens):
+    """Mean and p90 write→read gap of a batch, in *token* units.
+
+    For every read instruction, the distance back to the most-recent write
+    instruction, measured in tokens (adjacent instruction slots are 2 tokens
+    apart: the write token, its data bit, then the read token). Pure
+    bookkeeping on already-sampled tokens — zero model forward passes.
+
+    tokens: (B, T) LongTensor (or array) of valid FFL strings. Reads with no
+    preceding write are skipped (cannot occur in valid FFL, where x_0 = w).
+    Returns (mean_gap, p90_gap); (0.0, 0.0) if the batch has no reads.
+    """
+    x = tokens.cpu().numpy() if hasattr(tokens, "cpu") else np.asarray(tokens)
+    inst = x[:, 0::2]                                       # (B, n_inst)
+    idx = np.arange(inst.shape[1])[None, :]
+    w_pos = np.where(inst == W, idx, -1)
+    last_w = np.maximum.accumulate(w_pos, axis=1)           # most-recent W slot, -1 if none
+    is_r = (inst == R) & (last_w >= 0)
+    gaps = ((idx - last_w) * 2)[is_r]                        # instruction-slot delta → tokens
+    if gaps.size == 0:
+        return 0.0, 0.0
+    return float(gaps.mean()), float(np.percentile(gaps, 90))
+
+
 def decode(tokens):
     """Decode a batch of token sequences to space-separated strings."""
     return [" ".join(ID_TO_SYMBOL[t] for t in row) for row in tokens.tolist()]
