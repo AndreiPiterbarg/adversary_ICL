@@ -4,8 +4,9 @@ import pytest
 import torch
 
 from flip_flop.data import W, R, I, ZERO, ONE
-from flip_flop.adversary.distribution import (BitMarkov, Periodic, Piecewise,
-                                              Planted, Stationary,
+from flip_flop.adversary.distribution import (AntiCorrelatedBits, BitMarkov,
+                                              MixtureTwoStationary, Periodic,
+                                              Piecewise, Planted, Stationary,
                                               WriteFlipRate)
 
 
@@ -62,6 +63,63 @@ def test_write_flip_valid(flip_rate):
     _assert_valid_ffl(tokens, 128)
 
 
+@pytest.mark.parametrize("pa,pb,lam", [
+    ((0.01, 0.01), (0.45, 0.45), 0.5),   # Liu's two endpoints
+    ((0.1, 0.1), (0.3, 0.05), 0.2),      # asymmetric
+    ((0.45, 0.45), (0.01, 0.01), 1.0),   # always endpoint A
+    ((0.2, 0.2), (0.2, 0.2), 0.0),       # always endpoint B
+])
+def test_mixture_two_stationary_valid(pa, pb, lam):
+    d = MixtureTwoStationary(T=128, p_w_a=pa[0], p_r_a=pa[1],
+                             p_w_b=pb[0], p_r_b=pb[1], lam=lam)
+    tokens = d.sample(64, np.random.default_rng(0))
+    _assert_valid_ffl(tokens, 128)
+
+
+def test_mixture_two_stationary_lambda_selects_endpoint():
+    """lam=1 -> only endpoint A's write rate; lam=0 -> only endpoint B's."""
+    a = MixtureTwoStationary(T=256, p_w_a=0.45, p_r_a=0.0,
+                             p_w_b=0.0, p_r_b=0.45, lam=1.0)
+    b = MixtureTwoStationary(T=256, p_w_a=0.45, p_r_a=0.0,
+                             p_w_b=0.0, p_r_b=0.45, lam=0.0)
+    fa = (a.sample(64, np.random.default_rng(0))[:, 0::2].numpy() == W).mean()
+    fb = (b.sample(64, np.random.default_rng(0))[:, 0::2].numpy() == W).mean()
+    assert fa > 0.3, f"lam=1 endpoint A (p_w=0.45) should be write-heavy, got {fa}"
+    assert fb < 0.1, f"lam=0 endpoint B (p_w=0) should be write-light, got {fb}"
+
+
+@pytest.mark.parametrize("rho", [0.0, 0.5, 1.0])
+@pytest.mark.parametrize("pw,pr", [(0.45, 0.0), (0.1, 0.1), (0.05, 0.05)])
+def test_anti_correlated_bits_valid(rho, pw, pr):
+    d = AntiCorrelatedBits(T=128, p_w=pw, p_r=pr, rho=rho)
+    tokens = d.sample(64, np.random.default_rng(0))
+    _assert_valid_ffl(tokens, 128)
+
+
+def test_anti_correlated_bits_breaks_recency():
+    """rho=1: consecutive write-bits anti-correlate (same-bit rate << 0.5),
+    while rho=0 recovers iid (~0.5). The automaton/LSTM stay correct because
+    read-determinism is still enforced (validity asserted above)."""
+    def consec_same_rate(d):
+        tok = d.sample(256, np.random.default_rng(1))
+        inst = tok[:, 0::2].numpy()
+        bits = tok[:, 1::2].numpy() - ZERO
+        same = tot = 0
+        for b in range(inst.shape[0]):
+            prev = None
+            for k in range(inst.shape[1]):
+                if inst[b, k] == W:
+                    if prev is not None:
+                        tot += 1
+                        same += int(bits[b, k] == prev)
+                    prev = bits[b, k]
+        return same / max(tot, 1)
+    r1 = consec_same_rate(AntiCorrelatedBits(T=512, p_w=0.45, p_r=0.0, rho=1.0))
+    r0 = consec_same_rate(AntiCorrelatedBits(T=512, p_w=0.45, p_r=0.0, rho=0.0))
+    assert r1 < 0.35, f"rho=1 should anti-correlate writes, got same-rate {r1}"
+    assert 0.4 < r0 < 0.6, f"rho=0 should be ~iid, got same-rate {r0}"
+
+
 def test_piecewise_valid():
     segs = [(0.0, 0.4, 0.4, 0.5), (0.5, 0.01, 0.01, 0.5)]
     d = Piecewise(T=128, segments=segs)
@@ -101,6 +159,9 @@ def test_roundtrip_to_from_dict():
         Piecewise(T=64, segments=[(0.0, 0.2, 0.2, 0.5), (0.5, 0.05, 0.05, 0.5)]),
         Periodic(T=64, period=2, pattern=[(0.3, 0.1, 0.5), (0.0, 0.2, 0.5)]),
         Planted(T=64, template="gap", params={"k_write": 3}),
+        MixtureTwoStationary(T=64, p_w_a=0.01, p_r_a=0.01, p_w_b=0.45,
+                             p_r_b=0.45, lam=0.3, bit_p1=0.5),
+        AntiCorrelatedBits(T=64, p_w=0.05, p_r=0.05, rho=0.8, k_hist=3),
     ]
     for d in cases:
         d2 = FFLDistribution.from_dict(d.to_dict())
