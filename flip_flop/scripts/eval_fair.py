@@ -53,6 +53,7 @@ import numpy as np
 import torch
 
 from flip_flop.adversary.distribution import FFLDistribution
+from flip_flop.adversary.heldout import HELDOUT_ANTICORR
 from flip_flop.adversary.io import load_frozen_model
 from flip_flop.eval import evaluate_dataset
 
@@ -71,6 +72,9 @@ MODELS = {
                   RESULTS / "full_from_scratch_adv" / "config.yaml"),
     "C_regret":  (RESULTS / "full_from_scratch_regret" / "model_final.pt",
                   RESULTS / "full_from_scratch_regret" / "config.yaml"),
+    # PLAN_beat_liu_r4 §3 final retrain (pooled descriptor-grid + Liu tails).
+    "beat_liu":  (RESULTS / "full_from_scratch_beat_liu" / "model_final.pt",
+                  RESULTS / "full_from_scratch_beat_liu" / "config.yaml"),
     "lstm":      (RESULTS / "lstm" / "model_final.pt",
                   RESULTS / "lstm" / "config.yaml"),
 }
@@ -86,12 +90,16 @@ TRAINING_POOL = RESULTS / "breaking_points" / "quick" / "breaking_points.jsonl"
 # Axis-access labels: which conditions' training distribution covered this axis.
 # Used to annotate every result row so the reader can see the asymmetry.
 AXIS_ACCESS = {
-    "periodic":         {"baseline": "out", "A_adv": "out", "B_liu": "out", "full_adv": "out", "C_regret": "out"},
-    "bit_markov":       {"baseline": "out", "A_adv": "in",  "B_liu": "out", "full_adv": "in",  "C_regret": "out"},
-    "write_flip":       {"baseline": "out", "A_adv": "in",  "B_liu": "out", "full_adv": "in",  "C_regret": "out"},
-    "piecewise":        {"baseline": "out", "A_adv": "in",  "B_liu": "out", "full_adv": "in",  "C_regret": "in"},
-    "stationary_novel": {"baseline": "out", "A_adv": "out", "B_liu": "in",  "full_adv": "in",  "C_regret": "out"},
-    "liu_control":      {"baseline": "out", "A_adv": "out", "B_liu": "in",  "full_adv": "in",  "C_regret": "out"},
+    "periodic":         {"baseline": "out", "A_adv": "out", "B_liu": "out", "full_adv": "out", "C_regret": "out", "beat_liu": "out"},
+    "bit_markov":       {"baseline": "out", "A_adv": "in",  "B_liu": "out", "full_adv": "in",  "C_regret": "out", "beat_liu": "out"},
+    "write_flip":       {"baseline": "out", "A_adv": "in",  "B_liu": "out", "full_adv": "in",  "C_regret": "out", "beat_liu": "out"},
+    "piecewise":        {"baseline": "out", "A_adv": "in",  "B_liu": "out", "full_adv": "in",  "C_regret": "in",  "beat_liu": "out"},
+    "stationary_novel": {"baseline": "out", "A_adv": "out", "B_liu": "in",  "full_adv": "in",  "C_regret": "out", "beat_liu": "in"},
+    "liu_control":      {"baseline": "out", "A_adv": "out", "B_liu": "in",  "full_adv": "in",  "C_regret": "out", "beat_liu": "in"},
+    # PLAN §4 (ii): pre-registered held-out AntiCorrelatedBits. Only the
+    # beat-liu pool ever touches the anti_correlated_bits axis (and never
+    # these exact frozen params); every other condition is strictly 'out'.
+    "heldout_anticorr": {"baseline": "out", "A_adv": "out", "B_liu": "out", "full_adv": "out", "C_regret": "out", "beat_liu": "in"},
 }
 
 
@@ -235,6 +243,21 @@ def _build_tier_H_stationary_novel(T: int) -> list[dict]:
             "config": {"name": "stationary", "T": T, "p_w": p_w, "p_r": p_r, "bit_p1": 0.5},
         })
     return dists
+
+
+def _build_tier_H_heldout_anticorr(T: int) -> list[dict]:
+    """PLAN §4 (ii): the pre-registered held-out AntiCorrelatedBits config.
+    Frozen in flip_flop/adversary/heldout.py and committed to git BEFORE
+    Rung 2. Never fed to the adversary objective. B_liu (trained only on
+    Liu's i.i.d. tails) should show non-trivial error here while the LSTM
+    stays ~0; a beat-liu model should be ~LSTM. This is the STRETCH axis."""
+    cfg = dict(HELDOUT_ANTICORR)
+    cfg["T"] = T
+    return [{
+        "tier": "H", "axis": "heldout_anticorr",
+        "name": f"heldout_anticorr_pw{cfg['p_w']:.2f}_rho{cfg['rho']:.1f}",
+        "config": cfg,
+    }]
 
 
 def _build_tier_L_liu(T: int) -> list[dict]:
@@ -393,9 +416,16 @@ def main():
     models = {}
     for name, (ckpt, cfg) in MODELS.items():
         if not ckpt.exists() or not cfg.exists():
-            raise SystemExit(f"[fail] missing {name}: {ckpt} or {cfg}")
+            print(f"[load]   [skip] {name}: missing {ckpt if not ckpt.exists() else cfg}")
+            continue
         models[name] = load_frozen_model(str(ckpt), str(cfg), device)
         print(f"[load]   {name}")
+    if "lstm" not in models:
+        raise SystemExit("[fail] LSTM skyline is required but missing "
+                          f"({MODELS['lstm'][0]}); cannot run the validity filter")
+    if len(models) < 2:
+        raise SystemExit("[fail] need >=1 trained model besides the LSTM; "
+                          "none of the conditions were found")
 
     # ---- Assemble eval distributions ------------------------------------
     training_keys = _training_pool_keys()
@@ -415,6 +445,9 @@ def main():
         sn = _build_tier_H_stationary_novel(args.T)
         all_dists.extend(sn)
         print(f"[tierH] {len(sn)} stationary_novel distributions")
+        ha = _build_tier_H_heldout_anticorr(args.T)
+        all_dists.extend(ha)
+        print(f"[tierH] {len(ha)} pre-registered held-out AntiCorrelatedBits")
     if "L" in args.tiers:
         l = _build_tier_L_liu(args.T)
         all_dists.extend(l)
