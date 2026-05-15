@@ -1,0 +1,44 @@
+# PLAN_beat_liu_r4 Sec.2.B -- FULL (publication) CMA over AntiCorrelatedBits.
+# The load-bearing axis for the STRETCH goal. Same encoder/objective as the
+# quick variant; larger budget + 3-seed final eval.
+
+strategy:
+  type: cma
+
+frozen_models:
+  transformer_ckpt: results/flip_flop/baseline/model_final.pt
+  transformer_cfg: results/flip_flop/baseline/config.yaml
+  lstm_ckpt: results/flip_flop/lstm/model_final.pt
+  lstm_cfg: flip_flop/configs/lstm.yaml
+  use_lstm: true
+  transformer2_ckpt: ""
+  transformer2_cfg: ""
+
+distribution:
+  dist_name: anti_correlated_bits
+  T: 512
+
+cma:
+  budget: 1000
+  pop_size: 16
+  sigma_init: 0.3
+  num_restarts: 3
+
+search:
+  search_n: 2000
+  final_eval_n: 100000
+  eval_batch_size: 64
+  n_final_seeds: 3
+
+objective:
+  objective_mode: regret
+  min_reads_per_seq: 3.0
+  min_gap: 4.0
+  regret_hinge_coef: 5.0
+  regret_hinge_tol: 0.001
+
+output:
+  out_dir: results/flip_flop/adversary/anti_correlated_bits
+  top_k: 25
+  seed: 0
+  device: auto

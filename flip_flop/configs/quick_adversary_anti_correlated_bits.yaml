@@ -1,0 +1,50 @@
+# PLAN_beat_liu_r4 Sec.2.B -- quick CMA over AntiCorrelatedBits (the only axis
+# that can actually BEAT Liu). Stationary instruction sampling (free p_w, p_r
+# keeps the full gap axis) with a write-bit stream set to the minority of the
+# last 3 writes w.p. rho. Read-determinism still enforced, so the automaton
+# and the LSTM stay ~0 -- only recency/majority heuristics fail. 4-dim encoder
+# (softmax-3 over (p_w,p_r,p_i) + sigmoid(rho)), searched jointly with the gap
+# axis so the anti-correlated bits can be placed at BOTH gap extremes.
+#
+# transformer_ckpt is overridden per round by run_beat_liu_loop.py to M_{k-1}.
+
+strategy:
+  type: cma
+
+frozen_models:
+  transformer_ckpt: results/flip_flop/baseline/model_final.pt
+  transformer_cfg: results/flip_flop/baseline/config.yaml
+  lstm_ckpt: results/flip_flop/lstm/model_final.pt
+  lstm_cfg: flip_flop/configs/lstm.yaml
+  use_lstm: true
+  transformer2_ckpt: ""
+  transformer2_cfg: ""
+
+distribution:
+  dist_name: anti_correlated_bits
+  T: 512
+
+cma:
+  budget: 200            # 4-dim space; converges very fast
+  pop_size: 10
+  sigma_init: 0.3
+  num_restarts: 1
+
+search:
+  search_n: 500
+  final_eval_n: 5000
+  eval_batch_size: 64
+  n_final_seeds: 1
+
+objective:
+  objective_mode: regret
+  min_reads_per_seq: 3.0
+  min_gap: 4.0
+  regret_hinge_coef: 5.0
+  regret_hinge_tol: 0.001
+
+output:
+  out_dir: results/flip_flop/adversary/quick_anti_correlated_bits
+  top_k: 10
+  seed: 0
+  device: auto

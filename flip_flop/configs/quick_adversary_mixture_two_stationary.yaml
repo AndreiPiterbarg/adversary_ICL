@@ -1,0 +1,52 @@
+# PLAN_beat_liu_r4 Sec.2.A -- quick CMA over MixtureTwoStationary (Liu's OWN
+# two-tail family). A regret-driven adversary with no human prior can slide
+# the two free stationary endpoints to the model's true worst write-to-read
+# gap regime and rediscover FFL(0.98)/FFL(0.1). 7-dim encoder (two softmax-3
+# simplices + sigmoid(lambda)). Quick budget for the model-in-the-loop rounds
+# (~10 min combined with the anti_correlated_bits adversary).
+#
+# transformer_ckpt is overridden per round by run_beat_liu_loop.py to M_{k-1};
+# the default below is M_0 (the canonical baseline) for a standalone round 1.
+
+strategy:
+  type: cma
+
+frozen_models:
+  transformer_ckpt: results/flip_flop/baseline/model_final.pt
+  transformer_cfg: results/flip_flop/baseline/config.yaml
+  lstm_ckpt: results/flip_flop/lstm/model_final.pt
+  lstm_cfg: flip_flop/configs/lstm.yaml
+  use_lstm: true
+  # PLAN Sec.2.D: set both to enable the two-checkpoint robustness filter.
+  # Requires a one-time run_baseline on baseline_seed1.yaml first.
+  transformer2_ckpt: ""
+  transformer2_cfg: ""
+
+distribution:
+  dist_name: mixture_two_stationary
+  T: 512
+
+cma:
+  budget: 300            # 7-dim space; converges fast
+  pop_size: 12
+  sigma_init: 0.3
+  num_restarts: 1
+
+search:
+  search_n: 500
+  final_eval_n: 5000
+  eval_batch_size: 64
+  n_final_seeds: 1
+
+objective:
+  objective_mode: regret      # T_glitch - LSTM_glitch - hinge (PLAN Sec.1)
+  min_reads_per_seq: 3.0      # hard floor; blocks the p_r->0 exploit
+  min_gap: 4.0                # hard floor; rejects trivial short-range dists
+  regret_hinge_coef: 5.0      # soft LSTM validity hinge
+  regret_hinge_tol: 0.001
+
+output:
+  out_dir: results/flip_flop/adversary/quick_mixture_two_stationary
+  top_k: 10
+  seed: 0
+  device: auto
