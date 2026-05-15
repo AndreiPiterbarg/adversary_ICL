@@ -206,6 +206,123 @@ class WriteFlipRate(Stationary):
                    bit_p1=d.get("bit_p1", 0.5), flip_rate=d.get("flip_rate", 0.5))
 
 
+@dataclass
+class MixtureTwoStationary(FFLDistribution):
+    """PLAN §2.A: per-sequence Bernoulli(λ) mixture of two free stationary
+    endpoints. This is exactly Liu's own two-tail family — a regret-driven CMA
+    over it can slide the endpoints to the model's true worst write→read-gap
+    regime and rediscover FFL(0.98)/FFL(0.1) with no human prior.
+
+    Each sequence: with prob λ use endpoint A `(p_w_a, p_r_a)`, else endpoint
+    B `(p_w_b, p_r_b)`. Instructions iid within a sequence; bits iid uniform
+    (bit_p1, default 0.5). p_i per endpoint = 1 - p_w - p_r.
+    """
+    T: int = 512
+    p_w_a: float = 0.1
+    p_r_a: float = 0.1
+    p_w_b: float = 0.45
+    p_r_b: float = 0.45
+    lam: float = 0.5          # P(a sequence is drawn from endpoint A)
+    bit_p1: float = 0.5
+    name: str = "mixture_two_stationary"
+
+    def __post_init__(self):
+        assert self.T % 2 == 0 and self.T >= 4
+        for pw, pr in ((self.p_w_a, self.p_r_a), (self.p_w_b, self.p_r_b)):
+            assert 0.0 <= pw and 0.0 <= pr and pw + pr <= 1.0 + 1e-9, (
+                f"invalid endpoint (p_w, p_r) = ({pw}, {pr})"
+            )
+        assert 0.0 <= self.lam <= 1.0
+        assert 0.0 <= self.bit_p1 <= 1.0
+
+    def sample(self, batch_size, rng):
+        B = batch_size
+        n_inst = self.T // 2
+        use_a = rng.random(B) < self.lam
+        p_w_col = np.where(use_a, self.p_w_a, self.p_w_b)[:, None]
+        p_r_col = np.where(use_a, self.p_r_a, self.p_r_b)[:, None]
+        p_w = np.broadcast_to(p_w_col, (B, n_inst)).copy()
+        p_r = np.broadcast_to(p_r_col, (B, n_inst)).copy()
+        inst = _sample_instructions(p_w, p_r, rng)
+        data = _sample_bits_biased((B, n_inst), self.bit_p1, rng)
+        return self._finalize(inst, data)
+
+    def to_dict(self):
+        return {"name": "mixture_two_stationary", "T": self.T,
+                "p_w_a": self.p_w_a, "p_r_a": self.p_r_a,
+                "p_w_b": self.p_w_b, "p_r_b": self.p_r_b,
+                "lam": self.lam, "bit_p1": self.bit_p1}
+
+    @classmethod
+    def _from_dict(cls, d):
+        return cls(T=d["T"], p_w_a=d["p_w_a"], p_r_a=d["p_r_a"],
+                   p_w_b=d["p_w_b"], p_r_b=d["p_r_b"], lam=d["lam"],
+                   bit_p1=d.get("bit_p1", 0.5))
+
+
+@dataclass
+class AntiCorrelatedBits(Stationary):
+    """PLAN §2.B: Stationary instruction sampling (free p_w, p_r — keeps the
+    full gap axis) with a write-bit stream that is adversarial against the
+    recency/majority heuristic.
+
+    At every write, with probability `rho`, the written bit is set to the
+    *minority* of the previous `k_hist` (=3) written bits; otherwise it is
+    iid uniform (`bit_p1`, default 0.5). When history is empty or tied, the
+    iid fallback is used. Read-determinism is still enforced, so the exact
+    flip-flop automaton and the state-tracking LSTM stay ≈0 — only models
+    leaning on "predict the majority / most-recent recent write-bit" fail.
+    This is a structured, valid hard distribution, not a pathology.
+    """
+    rho: float = 1.0
+    k_hist: int = 3
+    name: str = "anti_correlated_bits"
+
+    def __post_init__(self):
+        super().__post_init__()
+        assert 0.0 <= self.rho <= 1.0
+        assert self.k_hist >= 1
+
+    def sample(self, batch_size, rng):
+        B = batch_size
+        n_inst = self.T // 2
+        p_w, p_r = self._inst_probs(B)
+        inst = _sample_instructions(p_w, p_r, rng)
+        data = _sample_bits_biased((B, n_inst), self.bit_p1, rng)  # iid fallback
+
+        k = self.k_hist
+        hist = np.full((B, k), -1, dtype=np.int64)  # ring of last k written bits
+        do_anti = rng.random((B, n_inst)) < self.rho
+        for j in range(n_inst):
+            is_w = inst[:, j] == W
+            valid = hist >= 0
+            cnt = valid.sum(axis=1)
+            ones = np.where(valid, hist, 0).sum(axis=1)
+            zeros = cnt - ones
+            # minority value: the bit with the strictly smaller count;
+            # empty / tied history -> -1 -> keep the iid fallback bit.
+            minority = np.where(ones < zeros, 1, np.where(zeros < ones, 0, -1))
+            use_anti = is_w & do_anti[:, j] & (minority >= 0)
+            new_bit = np.where(use_anti, minority, data[:, j])
+            data[:, j] = np.where(is_w, new_bit, data[:, j])
+            if is_w.any():
+                hist[is_w] = np.concatenate(
+                    [hist[is_w, 1:], new_bit[is_w, None]], axis=1
+                )
+        return self._finalize(inst, data)
+
+    def to_dict(self):
+        d = super().to_dict()
+        d.update(name="anti_correlated_bits", rho=self.rho, k_hist=self.k_hist)
+        return d
+
+    @classmethod
+    def _from_dict(cls, d):
+        return cls(T=d["T"], p_w=d["p_w"], p_r=d["p_r"],
+                   bit_p1=d.get("bit_p1", 0.5), rho=d.get("rho", 1.0),
+                   k_hist=d.get("k_hist", 3))
+
+
 # ---------------------------------------------------------------------------
 # C — non-stationary schedules
 # ---------------------------------------------------------------------------
@@ -455,6 +572,8 @@ REGISTRY: dict[str, type[FFLDistribution]] = {
     "stationary": Stationary,
     "bit_markov": BitMarkov,
     "write_flip": WriteFlipRate,
+    "mixture_two_stationary": MixtureTwoStationary,
+    "anti_correlated_bits": AntiCorrelatedBits,
     "piecewise": Piecewise,
     "periodic": Periodic,
     "planted": Planted,

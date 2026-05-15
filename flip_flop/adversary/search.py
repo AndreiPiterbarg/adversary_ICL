@@ -11,7 +11,7 @@ import json
 import os
 import pickle
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -29,6 +29,9 @@ class EvalResult:
     read_density: float
     n_samples: int
     seed: int
+    gap: float = 0.0          # mean write→read gap (tokens) of the sampled batch
+    gap_p90: float = 0.0      # p90 write→read gap (tokens) — descriptor-grid axis
+    T_glitch2: float = 0.0    # second-checkpoint glitch (§2.D); 0 if no transformer2
     step: int = 0
     extra: dict = field(default_factory=dict)
     is_valid: bool = True
@@ -45,6 +48,9 @@ class EvalResult:
             read_density=fr.read_density,
             n_samples=fr.n_samples,
             seed=fr.seed,
+            gap=fr.gap,
+            gap_p90=fr.gap_p90,
+            T_glitch2=fr.T_glitch2,
             step=step,
             extra=extra,
             is_valid=fr.is_valid,
@@ -219,11 +225,71 @@ class PiecewiseEncoder:
         return rng.standard_normal(self.n_dims) * 0.3
 
 
+class StationaryMixtureEncoder:
+    """PLAN §2.A: real-vector <-> MixtureTwoStationary.
+
+    7 dims: two softmax-3 simplex triplets (each → an endpoint's
+    (p_w, p_r, p_i); we keep p_w, p_r) + one sigmoid for the mixture weight λ.
+    Bits stay iid uniform (bit_p1 = 0.5), matching Liu's tails.
+    """
+    def __init__(self, T: int):
+        self.T = T
+        self.n_dims = 7
+
+    def decode(self, x: np.ndarray):
+        from .distribution import MixtureTwoStationary
+        sa = _softmax3(x[0:3])
+        sb = _softmax3(x[3:6])
+        lam = float(_sigmoid(np.array([x[6]]))[0])
+        return MixtureTwoStationary(
+            T=self.T,
+            p_w_a=float(sa[0]), p_r_a=float(sa[1]),
+            p_w_b=float(sb[0]), p_r_b=float(sb[1]),
+            lam=lam,
+        )
+
+    def random_init(self, rng: np.random.Generator) -> np.ndarray:
+        return rng.standard_normal(self.n_dims) * 0.3
+
+
+class AntiCorrelatedBitsEncoder:
+    """PLAN §2.B: real-vector <-> AntiCorrelatedBits.
+
+    4 dims: softmax-3 over (p_w, p_r, p_i) + sigmoid for the anti-correlation
+    strength ρ. Searched jointly with the gap axis so CMA can place the
+    anti-correlated bit stream at any write→read-gap regime.
+    """
+    def __init__(self, T: int):
+        self.T = T
+        self.n_dims = 4
+
+    def decode(self, x: np.ndarray):
+        from .distribution import AntiCorrelatedBits
+        s = _softmax3(x[0:3])
+        rho = float(_sigmoid(np.array([x[3]]))[0])
+        return AntiCorrelatedBits(T=self.T, p_w=float(s[0]), p_r=float(s[1]),
+                                  rho=rho)
+
+    def random_init(self, rng: np.random.Generator) -> np.ndarray:
+        return rng.standard_normal(self.n_dims) * 0.3
+
+
+@runtime_checkable
+class Encoder(Protocol):
+    """Structural type for every CMA encoder: a dim count plus a vector<->dist
+    codec. `cma_search` only relies on this surface, so any encoder above is
+    interchangeable."""
+    n_dims: int
+
+    def decode(self, x: np.ndarray) -> FFLDistribution: ...
+    def random_init(self, rng: np.random.Generator) -> np.ndarray: ...
+
+
 # ---------------------------------------------------------------------------
 # CMA-ES search loop
 # ---------------------------------------------------------------------------
 def cma_search(
-    encoder: PiecewiseEncoder,
+    encoder: Encoder,
     objective_fn: Callable[[FFLDistribution], FitnessResult],
     out_dir: str,
     *,
