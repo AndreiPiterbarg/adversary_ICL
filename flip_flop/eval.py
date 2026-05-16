@@ -27,6 +27,37 @@ def clean_loss(logits, tokens):
 
 
 @torch.no_grad()
+def evaluate_dataset_per_seq(model, tokens, batch_size=64, device="cpu"):
+    """Per-sequence read-error / read-count arrays for a paired bootstrap.
+
+    Returns (errors_per_seq, reads_per_seq), both numpy int64 arrays of shape
+    (N,). Same masking/logits as evaluate_dataset; this is the only addition
+    needed for statistically-rigorous CIs at ~1e-5 error scales. The aggregate
+    evaluate_dataset below is left untouched (existing callers unaffected).
+    """
+    import numpy as np
+
+    was_training = model.training
+    model.eval()
+    err_chunks = []
+    read_chunks = []
+    for i in range(0, tokens.size(0), batch_size):
+        batch = tokens[i : i + batch_size].to(device)
+        logits = model(batch)
+        shift_logits = logits[:, :-1, :]
+        shift_targets = batch[:, 1:]
+        mask = batch[:, :-1] == R
+        preds = shift_logits.argmax(dim=-1)
+        err = ((preds != shift_targets) & mask).sum(dim=1)   # (b,)
+        rds = mask.sum(dim=1)                                 # (b,)
+        err_chunks.append(err.cpu().numpy().astype("int64"))
+        read_chunks.append(rds.cpu().numpy().astype("int64"))
+    if was_training:
+        model.train()
+    return np.concatenate(err_chunks), np.concatenate(read_chunks)
+
+
+@torch.no_grad()
 def evaluate_dataset(model, tokens, batch_size=64, device="cpu"):
     """Compute read-error rate (glitch rate) on a pre-sampled dataset.
 

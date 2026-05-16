@@ -1,0 +1,50 @@
+# PLAN_beat_liu_r4 Sec.2.E -- scientific control. IDENTICAL to
+# full_from_scratch_regret.yaml (paper-faithful arch/optimizer, same as B_liu)
+# except out_dir. Only the training dataset differs (stationary-only pool from
+# build_stationary_control.py), isolating "is non-stationarity necessary?".
+retrain_from_dataset:
+  init_from_ckpt: ""
+
+model:
+  family: gpt2
+  vocab_size: 5
+  n_positions: 512
+  n_embd: 512
+  n_layer: 6
+  n_head: 8
+  resid_pdrop: 0.0
+  embd_pdrop: 0.0
+  attn_pdrop: 0.0
+
+data:
+  seq_len: 512
+  train_p_i: 0.8
+  eval_in_p_i: 0.8
+  eval_sparse_p_i: 0.98
+  eval_dense_p_i: 0.1
+  eval_in_n: 1000
+  eval_sparse_n: 100000
+  eval_dense_n: 3000
+  eval_seed: 1
+
+training:
+  lr: 3.0e-4
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.999
+  warmup_steps: 50
+  train_steps: 10000
+  decay_end_step: 10001
+  batch_size: 16
+  grad_clip: 1.0
+  seed: 0
+  eval_every: 1000
+  training_eval_subset: 200
+  log_every: 100
+  save_every: 0
+  eval_batch_size: 64
+  device: auto
+  selection_enabled: false
+
+output:
+  out_dir: results/flip_flop/full_from_scratch_stationary_control
