@@ -23,7 +23,7 @@ class FFLMTransformer(nn.Module):
         attn_pdrop=0.0,
     ):
         super().__init__()
-        self.model = GPT2LMHeadModel(GPT2Config(
+        _cfg = GPT2Config(
             vocab_size=vocab_size,
             n_positions=n_positions,
             n_embd=n_embd,
@@ -33,7 +33,14 @@ class FFLMTransformer(nn.Module):
             embd_pdrop=embd_pdrop,
             attn_pdrop=attn_pdrop,
             use_cache=False,
-        ))
+        )
+        # Eager attention so output_attentions returns real weights (modern
+        # transformers defaults to sdpa, which yields None). Numerically
+        # equivalent to sdpa for logits/training; required by the attention-
+        # position diagnostic. Set on the config so it survives across
+        # transformers versions that pick the attn class at construction.
+        _cfg._attn_implementation = "eager"
+        self.model = GPT2LMHeadModel(_cfg)
         self.name = f"gpt2_L={n_layer}_d={n_embd}_H={n_head}"
 
     def forward(self, tokens):

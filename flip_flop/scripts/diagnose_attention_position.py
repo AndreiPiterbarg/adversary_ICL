@@ -66,6 +66,16 @@ def build_family(family, T=512):
         n_inst = dist.T // 2
         starts = [int(round(s[0] * n_inst)) for s in dist.segments]
         return (lambda n, rng: dist.sample(n, rng)), [2 * s for s in starts] + [dist.T]
+    if family == "heldout_piecewise":
+        # The pre-registered non-stationary band distribution where our beat
+        # lives (heldout.py, frozen in git 5a76deb). This is the correct
+        # family for the mechanism behind the Rung-0/1 result — NOT the legacy
+        # results_tier1_v2 piecewise_c00.
+        from flip_flop.adversary.heldout import HELDOUT_PIECEWISE
+        dist = FFLDistribution.from_dict(dict(HELDOUT_PIECEWISE, T=T))
+        n_inst = dist.T // 2
+        starts = [int(round(s[0] * n_inst)) for s in dist.segments]
+        return (lambda n, rng: dist.sample(n, rng)), [2 * s for s in starts] + [dist.T]
     if family == "ffl_098":
         return (lambda n, rng: sample_ffl(T, 0.98, n, rng)), [0, T]
     if family == "ffl_080":
@@ -250,7 +260,7 @@ def main():
     p.add_argument("--ckpt", required=True,
                    help="path to model_final.pt; config.yaml is read from same dir")
     p.add_argument("--family", default="piecewise_c00",
-                   choices=["piecewise_c00", "ffl_098", "ffl_080"])
+                   choices=["piecewise_c00", "heldout_piecewise", "ffl_098", "ffl_080"])
     p.add_argument("--n", type=int, default=500)
     p.add_argument("--out", default=None,
                    help="default: <ckpt_dir>/attention_position/<family>")
