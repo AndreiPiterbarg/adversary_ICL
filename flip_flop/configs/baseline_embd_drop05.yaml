@@ -5,7 +5,9 @@
 #
 # Purpose in THIS project: re-run the adversary CMA-ES loop on the resulting
 # checkpoint. Question: do piecewise_c00 / bit_markov_c00 still surface, or
-# does this regularizer close them? See REGULARIZATION_PLAN.md, experiment 1.
+# does this regularizer close them? (Liu's only large-effect standard
+# regularizer — R6 / Fig 10. Config-only knob; not part of the
+# PLAN_beat_liu_r4.md plan of record, kept for ad-hoc regularization probes.)
 #
 # Diff from baseline.yaml: embd_pdrop 0.0 -> 0.5, out_dir.
 

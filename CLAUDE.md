@@ -6,17 +6,19 @@ Find **structured, interesting failure modes** of Transformer FFLMs by training 
 
 ### Core Idea
 
-We keep the same train → search → retrain loop as our prior adversarial-ICL work, but applied to the flip-flop toy from Liu et al. 2023:
+Train → search → retrain loop, applied to the flip-flop toy from Liu et al. 2023:
 
 1. **Train** an FFLM Transformer on a base distribution (canonical FFL(0.8)).
-2. **Adversary** searches over a parametric family of flip-flop distributions — instruction probabilities `(p_w, p_r, p_i)`, possibly data-bit biases, non-stationary / per-position probabilities, sequence length — to maximize the trained model's read-error (glitch) rate.
+2. **Adversary** searches over a parametric family of flip-flop distributions — instruction probabilities `(p_w, p_r, p_i)`, data-bit biases, non-stationary / per-position probabilities — to maximize the trained model's read-error (glitch) rate.
 3. **Retrain** on the adversarial distribution (or a mixture with FFL(0.8)) and measure how the glitch rate moves.
 
 Liu et al. established the existence of breaking tails (FFL(0.98), FFL(0.1)) by hand and showed (R4) that training on rare sequences closes the gap. Our contribution is to automate that discovery — letting an optimizer find the worst distribution inside a structured search space, then close it.
 
+**The current plan of record is [`docs/PLAN_beat_liu_r4.md`](docs/PLAN_beat_liu_r4.md).** It supersedes all earlier plans; read it before starting work. Results to date are logged in [`docs/RESULTS_adversary_retrain.md`](docs/RESULTS_adversary_retrain.md).
+
 ## Reference Implementation
 
-- **Paper**: "Exposing Attention Glitches with Flip-Flop Language Modeling" (Liu et al. 2023, arXiv:2306.00946).
+- **Paper**: "Exposing Attention Glitches with Flip-Flop Language Modeling" (Liu et al. 2023, arXiv:2306.00946). Full text in `docs/ff_paper.txt`.
 - **Data release**: https://huggingface.co/datasets/synthseq/flipflop
 - FFLM training in `flip_flop/` follows Appendix B.2 of the paper: 6-layer / 512-dim / 8-head GPT-2 baseline (~19M params), AdamW (β=0.9/0.999, lr=3e-4, wd=0.1), 50-step warmup + linear decay to 0 at step 10001, batch 16 × 10000 steps, "clean-mode" loss on read positions only.
 
@@ -24,20 +26,29 @@ Liu et al. established the existence of breaking tails (FFL(0.98), FFL(0.1)) by 
 
 ```
 adversary_ICL/
-├── CLAUDE.md
-├── flip_flop/              # PRIMARY: FFLM experiments
-│   ├── data.py             # FFL(T, p) sampler
-│   ├── model.py            # GPT-2 Transformer + 1-layer LSTM baseline
-│   ├── train.py            # Training loop (paper Appendix B.2)
-│   ├── eval.py             # Clean-mode loss + glitch-rate evaluation
-│   ├── adversary/          # (planned) optimizer over FFL distribution params
-│   ├── configs/            # baseline.yaml, lstm.yaml
-│   └── scripts/            # run_baseline.py (entry point)
-├── src/                    # Prior work: linear-regression ICL + CMA-ES adversary
-│   ├── icl/  adversary/  tasks/  eval/
-├── configs/  experiments/  # Legacy configs & launch scripts for src/
-├── results/                # Checkpoints & logs (gitignored)
-└── notebooks/              # Analysis only
+├── CLAUDE.md                       # this file — project context & conventions
+├── README.md                       # human-facing overview + quickstart
+├── requirements.txt
+├── docs/                           # all prose: plan, results, reference paper
+│   ├── PLAN_beat_liu_r4.md         # CURRENT plan of record
+│   ├── RESULTS_adversary_retrain.md# results log to date
+│   └── ff_paper.txt                # Liu et al. 2023, reference text
+└── flip_flop/                      # the entire codebase — pure Python
+    ├── data.py                     # FFL(T, p) sampler, validity, write_read_gaps
+    ├── model.py                    # GPT-2 Transformer + 1-layer LSTM
+    ├── train.py                    # training loop (paper Appendix B.2)
+    ├── eval.py                     # clean-mode loss + glitch-rate eval
+    ├── adversary/                  # CMA-ES distribution search
+    │   ├── distribution.py  family.py  heldout.py  io.py
+    │   ├── mixture_sampler.py  objective.py  r4_sampler.py
+    │   ├── run.py  search.py
+    │   └── tests/                  # pytest suite
+    ├── analysis/                   # LSTM/Transformer state-probing diagnostics
+    │   └── ablation.py  lstm_state.py  probe.py  transformer_state.py
+    ├── configs/                    # all hyperparameters (*.yaml)
+    └── scripts/                    # entry points (run_baseline, run_adversary, …)
+
+results/  results_full_loop/  results_tier1_v2/   # checkpoints & logs (gitignored)
 ```
 
 ## Key Concepts
@@ -46,7 +57,7 @@ adversary_ICL/
 - **FFL(T, p)**: distribution over length-T flip-flop strings parameterized by `p = (p_w, p_r, p_i)`. Canonical baseline: FFL(T=512, p=(0.1, 0.1, 0.8)).
 - **Clean-mode loss**: cross-entropy on `x_{t+1}` only when `x_t = r`. Non-deterministic positions (after `w`/`i`) are not supervised.
 - **Glitch rate**: fraction of read positions mispredicted under argmax decoding — the paper's primary metric. Reported on three held-out sets: FFL(0.8) in-dist, FFL(0.98) sparse tail, FFL(0.1) dense tail.
-- **Adversary**: optimizer (CMA-ES or similar) that searches over FFL distribution parameters to maximize the trained FFLM's glitch rate.
+- **Adversary**: CMA-ES search over FFL distribution parameters that maximizes the trained FFLM's glitch rate while keeping a 1-layer LSTM "skyline" clean.
 - **Retrain loop**: after the adversary finds a breaking distribution, retrain on FFL(0.8) ∪ adversarial, then re-probe.
 
 ## Conventions
@@ -54,9 +65,8 @@ adversary_ICL/
 - Python 3.10+, PyTorch, HuggingFace `transformers`.
 - All hyperparameters live in `flip_flop/configs/*.yaml` — no magic numbers in code.
 - Every run logs config + seed and writes `train_log.jsonl` + `eval_log.jsonl` under `cfg.out_dir`.
-- Large checkpoints are gitignored under `results/`.
+- Large checkpoints / run outputs are gitignored under `results*/`.
 - Keep `flip_flop/` close to the paper; any deviation from Appendix B.2 should be commented.
-- Notebooks are for analysis only, not for running experiments.
 
 ## What Makes a Good Adversarial Distribution
 
@@ -68,10 +78,10 @@ Consistent with the paper's R4 finding ("training on rare sequences works by a w
 
 ## Development Notes
 
-- `flip_flop/` is the primary working directory going forward. The `src/` tree (linear-regression ICL + CMA-ES adversary) is prior art, kept for reference but not the current focus.
+- `flip_flop/` is the only working tree. Keep additions minimal — small, paper-faithful modules beat heavy abstraction.
 - Always compare the Transformer's glitch rate against the **1-layer LSTM** baseline (`flip_flop/configs/lstm.yaml`) — paper R2 says LSTM reaches 0% error, so it is the "skyline" reference for whether a distribution is legitimately hard or just ill-defined.
 - New adversary code goes in `flip_flop/adversary/`; new experiment configs in `flip_flop/configs/`.
-- When adding to `flip_flop/`, keep it minimal — small, paper-faithful modules beat heavy abstraction.
+- Run the test suite before relying on a change: `python -m pytest flip_flop/adversary/tests -q`.
 
 ## Attention-position diagnostic
 
@@ -83,4 +93,3 @@ python -m flip_flop.scripts.diagnose_attention_position \
 ```
 
 Look at `summary.md` in `<ckpt_dir>/attention_position/piecewise_c00/`: lower `mass_early` and higher `mass_correct` on WRONG-segment-3 reads = improvement.
-
