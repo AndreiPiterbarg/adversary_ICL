@@ -1,0 +1,59 @@
+# docs/PLAN_expressive_adversary.md — Phase 1 (rediscovery sanity).
+#
+# ONE feature-conditioned log-linear controller replaces the hand-coded family
+# zoo: the optimizer searches a 24-dim weight vector (3*(d+1), d=7 features) of
+# a single distribution that is a code-verified strict superset of Stationary /
+# WriteFlipRate / BitMarkov / position-schedule families. Validity + the LSTM-0
+# skyline hold for ANY weights (read bits are forced by enforce_read_determinism)
+# and read/write starvation is unreachable by the affine floor map — so the
+# regret objective + existing gates need no change.
+#
+# Phase-1 purpose: small-budget run to confirm the controller REDISCOVERS a
+# breaking regime WITHOUT being told any axis (inspect descriptor() weights:
+# mass should concentrate on position/gap features). NOT the publication run.
+#
+# For the beat-Liu framing, override transformer_ckpt to B_liu:
+#   transformer_ckpt: results/flip_flop/full_from_scratch_liu_only/model_final.pt
+#   transformer_cfg:  results/flip_flop/full_from_scratch_liu_only/config.yaml
+# (run_beat_liu_loop.py overrides this per round, as for the other quick axes.)
+
+strategy:
+  type: cma
+
+frozen_models:
+  transformer_ckpt: results/flip_flop/baseline/model_final.pt
+  transformer_cfg: results/flip_flop/baseline/config.yaml
+  lstm_ckpt: results/flip_flop/lstm/model_final.pt
+  lstm_cfg: flip_flop/configs/lstm.yaml
+  use_lstm: true
+  transformer2_ckpt: ""
+  transformer2_cfg: ""
+
+distribution:
+  dist_name: feature_controlled
+  T: 512
+
+cma:
+  budget: 640            # 24-dim diagonal CMA; sanity, not convergence
+  pop_size: 16
+  sigma_init: 0.3
+  num_restarts: 1
+
+search:
+  search_n: 1000
+  final_eval_n: 5000
+  eval_batch_size: 64
+  n_final_seeds: 1
+
+objective:
+  objective_mode: regret
+  min_reads_per_seq: 3.0
+  min_gap: 4.0
+  regret_hinge_coef: 5.0
+  regret_hinge_tol: 0.001
+
+output:
+  out_dir: results/flip_flop/adversary/quick_feature_controlled
+  top_k: 10
+  seed: 0
+  device: auto

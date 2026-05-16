@@ -1,0 +1,59 @@
+# docs/PLAN_expressive_adversary.md — Phase 2 (the real run).
+#
+# FULL (publication) CMA over the feature-conditioned controller — the single
+# distribution that subsumes the hand-coded family zoo. Same encoder / objective
+# / gates as the quick variant; larger budget sized for the 24-dim space + a
+# 3-seed final eval. Output feeds the UNCHANGED pool->dump->retrain->eval
+# pipeline (pool_breaking_points reconstructs it via FFLDistribution.from_dict).
+#
+# Beat-Liu framing: point transformer_ckpt at B_liu (the competitor) so the
+# controller searches for distributions that break the Liu-R4 model while the
+# LSTM skyline stays at 0:
+#   transformer_ckpt: results/flip_flop/full_from_scratch_liu_only/model_final.pt
+#   transformer_cfg:  results/flip_flop/full_from_scratch_liu_only/config.yaml
+# Default below targets the baseline (guaranteed present, matches the other
+# full configs); flip the two lines above for the head-to-head.
+#
+# Pre-registration: freeze this config (esp. budget/seed/gates) before the run;
+# the held-out eval is the frozen set in flip_flop/PRE_REGISTRATION.md.
+
+strategy:
+  type: cma
+
+frozen_models:
+  transformer_ckpt: results/flip_flop/baseline/model_final.pt
+  transformer_cfg: results/flip_flop/baseline/config.yaml
+  lstm_ckpt: results/flip_flop/lstm/model_final.pt
+  lstm_cfg: flip_flop/configs/lstm.yaml
+  use_lstm: true
+  transformer2_ckpt: ""
+  transformer2_cfg: ""
+
+distribution:
+  dist_name: feature_controlled
+  T: 512
+
+cma:
+  budget: 6000           # 24-dim diagonal CMA, pop 16, 3 restarts (~125 gen/restart)
+  pop_size: 16
+  sigma_init: 0.3
+  num_restarts: 3
+
+search:
+  search_n: 2000
+  final_eval_n: 100000
+  eval_batch_size: 64
+  n_final_seeds: 3
+
+objective:
+  objective_mode: regret
+  min_reads_per_seq: 3.0
+  min_gap: 4.0
+  regret_hinge_coef: 5.0
+  regret_hinge_tol: 0.001
+
+output:
+  out_dir: results/flip_flop/adversary/feature_controlled
+  top_k: 25
+  seed: 0
+  device: auto
