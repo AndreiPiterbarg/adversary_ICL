@@ -1,8 +1,7 @@
 """Search strategies: grid and diagonal-CMA-ES.
 
-The CMA-ES class is a verbatim copy of src/adversary/search.py:DiagonalCMAES
-to avoid coupling to the legacy Gaussian-regression tree. Minimal, ~100 lines,
-self-contained.
+The diagonal CMA-ES class is a minimal (~100-line), self-contained
+implementation, deliberately decoupled from any external optimizer library.
 """
 from __future__ import annotations
 
@@ -98,7 +97,7 @@ def grid_search(
 
 
 # ---------------------------------------------------------------------------
-# Diagonal CMA-ES  (copied from src/adversary/search.py)
+# Diagonal CMA-ES  (minimal self-contained implementation)
 # ---------------------------------------------------------------------------
 class DiagonalCMAES:
     """Minimal diagonal CMA-ES (sep-CMA-ES).
@@ -272,6 +271,16 @@ class AntiCorrelatedBitsEncoder:
 
     def random_init(self, rng: np.random.Generator) -> np.ndarray:
         return rng.standard_normal(self.n_dims) * 0.3
+
+
+# Expressive-adversary encoder (single source of truth in the tested
+# `expressive_adversary` package). Import is guarded so it can never break the
+# existing pipeline; `run._make_encoder` raises a clear error if it is None and
+# actually requested.
+try:
+    from expressive_adversary.encoder import FeatureControlledEncoder  # noqa: F401
+except Exception:  # pragma: no cover - defensive, keeps pipeline import-safe
+    FeatureControlledEncoder = None
 
 
 @runtime_checkable

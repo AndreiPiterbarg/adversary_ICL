@@ -40,6 +40,35 @@ LIU_TAILS: dict = {
 }
 
 
+def piecewise_band(T: int = T_DEFAULT, n: int = 16, seed: int = 20260516) -> dict[str, dict]:
+    """PLAN Sec.2.C -- pre-registered robustness band around HELDOUT_PIECEWISE.
+
+    16 valid piecewise configs on a FIXED seeded grid: the two interior segment
+    boundaries jittered +/-0.08 and seg-3 read-rate jittered +/-0.10, clamped to
+    a legal FFL piecewise (0 < b1 < b2 < 1, p_w+p_r<=1). Makes the beat claim
+    region-level (the diagnostic already showed 59/60 region robustness; this
+    freezes it). FROZEN -- never fed to any adversary. Changing this after
+    seeing results invalidates the pre-registration.
+    """
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    out: dict[str, dict] = {}
+    for i in range(n):
+        b1 = float(np.clip(0.25 + rng.uniform(-0.08, 0.08), 0.10, 0.40))
+        b2 = float(np.clip(0.75 + rng.uniform(-0.08, 0.08), b1 + 0.15, 0.92))
+        pr3 = float(np.clip(0.45 + rng.uniform(-0.10, 0.10), 0.20, 0.60))
+        pw1 = float(np.clip(0.02 + rng.uniform(-0.01, 0.01), 0.005, 0.05))
+        out[f"piecewise_band_{i:02d}"] = {
+            "name": "piecewise", "T": T,
+            "segments": [
+                [0.0, pw1, 0.0, 0.5],
+                [b1, pw1, 0.02, 0.5],
+                [b2, 0.0, pr3, 0.5],
+            ],
+        }
+    return out
+
+
 def heldout_set(T: int = T_DEFAULT) -> dict[str, dict]:
     """Name -> config for the per-round loop gate (Sec.3 step 4). Liu tails are
     included so the round model is always measured against the R4 endpoints."""

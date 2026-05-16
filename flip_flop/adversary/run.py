@@ -13,7 +13,8 @@ import yaml
 from . import distribution as dist_mod
 from .io import dump_final_eval, load_frozen_model, save_top_k
 from .objective import fitness
-from .search import (AntiCorrelatedBitsEncoder, EvalResult, PiecewiseEncoder,
+from .search import (AntiCorrelatedBitsEncoder, EvalResult,
+                     FeatureControlledEncoder, PiecewiseEncoder,
                      StationaryMixtureEncoder, cma_search, grid_search,
                      save_checkpoint)
 
@@ -120,9 +121,16 @@ def _make_encoder(cfg: AdversaryConfig):
         return StationaryMixtureEncoder(T=cfg.T)
     if name == "anti_correlated_bits":
         return AntiCorrelatedBitsEncoder(T=cfg.T)
+    if name == "feature_controlled":
+        if FeatureControlledEncoder is None:
+            raise ImportError(
+                "expressive_adversary not importable; cannot build "
+                "FeatureControlledEncoder (run from the repo root)"
+            )
+        return FeatureControlledEncoder(T=cfg.T)
     raise ValueError(
-        f"no CMA encoder for dist_name={name!r}; "
-        f"known: piecewise, mixture_two_stationary, anti_correlated_bits"
+        f"no CMA encoder for dist_name={name!r}; known: piecewise, "
+        f"mixture_two_stationary, anti_correlated_bits, feature_controlled"
     )
 
 

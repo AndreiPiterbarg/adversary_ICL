@@ -580,6 +580,27 @@ REGISTRY: dict[str, type[FFLDistribution]] = {
 }
 
 
+# --- Expressive adversary (docs/PLAN_expressive_adversary.md) ----------------
+# The feature-conditioned controller's single source of truth is the tested,
+# self-contained `expressive_adversary` package. It is registered here PURELY
+# ADDITIVELY so the existing pool/dump/retrain pipeline reconstructs it via
+# `FFLDistribution.from_dict` with no other change. The import is guarded so a
+# path/env issue can NEVER break the existing adversary pipeline (e.g. a running
+# Rung 1) — worst case the family is simply unavailable until the path is fixed.
+try:
+    from expressive_adversary.distribution import (  # noqa: E402
+        FeatureControlledFFL as _FeatureControlledFFL,
+    )
+    REGISTRY["feature_controlled"] = _FeatureControlledFFL
+except Exception as _exc:  # pragma: no cover - defensive, keeps pipeline safe
+    import warnings as _warnings
+    _warnings.warn(
+        f"expressive_adversary not importable ({_exc!r}); "
+        "'feature_controlled' distribution unavailable",
+        RuntimeWarning,
+    )
+
+
 def build(name: str, **kwargs: Any) -> FFLDistribution:
     """Instantiate a distribution by registry name."""
     if name not in REGISTRY:
